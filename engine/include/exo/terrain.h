@@ -21,10 +21,12 @@ typedef enum ExoTerrain {
 	EXO_TER_BOOST_W
 } ExoTerrain;
 
-int        exo_terrain_cols(ExoCourse course);
-void       exo_terrain_xy(ExoCourse course, uint16_t id, int *tx, int *ty);
-ExoTerrain exo_terrain_kind(ExoCourse course, uint16_t id);
-int        exo_terrain_is_bush_tl(ExoCourse course, uint16_t tl, uint16_t tr,
+int        exo_terrain_cols(ExoCourse course, const ExoTilemap *m);
+void       exo_terrain_xy(ExoCourse course, const ExoTilemap *m, uint16_t id,
+                          int *tx, int *ty);
+ExoTerrain exo_terrain_kind(ExoCourse course, const ExoTilemap *m, uint16_t id);
+int        exo_terrain_is_bush_tl(ExoCourse course, const ExoTilemap *m,
+                                 uint16_t tl, uint16_t tr,
                                  uint16_t bl, uint16_t br);
 
 #endif

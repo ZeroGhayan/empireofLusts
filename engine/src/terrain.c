@@ -1,7 +1,9 @@
 #include "exo/terrain.h"
 
-int exo_terrain_cols(ExoCourse course)
+int exo_terrain_cols(ExoCourse course, const ExoTilemap *m)
 {
+	if (m && m->atlas_cols)
+		return (int)m->atlas_cols;
 	if (course == EXO_COURSE_SS4)
 		return EXO_SS4_COLS;
 	if (course == EXO_COURSE_DP1)
@@ -9,9 +11,10 @@ int exo_terrain_cols(ExoCourse course)
 	return 8;
 }
 
-void exo_terrain_xy(ExoCourse course, uint16_t id, int *tx, int *ty)
+void exo_terrain_xy(ExoCourse course, const ExoTilemap *m, uint16_t id,
+                    int *tx, int *ty)
 {
-	int cols = exo_terrain_cols(course);
+	int cols = exo_terrain_cols(course, m);
 	if (cols < 1)
 		cols = 1;
 	if (tx) *tx = (int)id % cols;
@@ -20,25 +23,32 @@ void exo_terrain_xy(ExoCourse course, uint16_t id, int *tx, int *ty)
 
 static int at(int cols, uint16_t id, int x, int y)
 {
+	if (cols < 1)
+		return 0;
 	return ((int)id % cols) == x && ((int)id / cols) == y;
 }
 
 static int row_range(int cols, uint16_t id, int y0, int y1)
 {
-	int y = (int)id / cols;
+	int y;
+	if (cols < 1)
+		return 0;
+	y = (int)id / cols;
 	return y >= y0 && y <= y1;
 }
 
 static int xr(int cols, uint16_t id, int x0, int x1, int y)
 {
-	int x = (int)id % cols;
-	int yy = (int)id / cols;
+	int x, yy;
+	if (cols < 1)
+		return 0;
+	x = (int)id % cols;
+	yy = (int)id / cols;
 	return yy == y && x >= x0 && x <= x1;
 }
 
-static ExoTerrain kind_dp1(uint16_t id)
+static ExoTerrain kind_dp1(int c, uint16_t id)
 {
-	const int c = EXO_DP1_COLS;
 	if (at(c, id, 0, 1) || at(c, id, 4, 6))
 		return EXO_TER_WATER;
 	if (at(c, id, 0, 0) || at(c, id, 1, 0) || at(c, id, 2, 0) || at(c, id, 3, 0))
@@ -48,10 +58,8 @@ static ExoTerrain kind_dp1(uint16_t id)
 	return EXO_TER_NONE;
 }
 
-static ExoTerrain kind_ss4(uint16_t id)
+static ExoTerrain kind_ss4(int c, uint16_t id)
 {
-	const int c = EXO_SS4_COLS;
-
 	if (row_range(c, id, 0, 4) ||
 	    at(c, id, 2, 5) || at(c, id, 1, 6) ||
 	    xr(c, id, 10, 12, 6) || xr(c, id, 15, 18, 6) ||
@@ -90,12 +98,14 @@ static ExoTerrain kind_ss4(uint16_t id)
 	return EXO_TER_NONE;
 }
 
-ExoTerrain exo_terrain_kind(ExoCourse course, uint16_t id)
+ExoTerrain exo_terrain_kind(ExoCourse course, const ExoTilemap *m, uint16_t id)
 {
+	int c = exo_terrain_cols(course, m);
+
 	if (course == EXO_COURSE_DP1)
-		return kind_dp1(id);
+		return kind_dp1(c, id);
 	if (course == EXO_COURSE_SS4)
-		return kind_ss4(id);
+		return kind_ss4(c, id);
 	if (id == EXO_TILE_WALL)
 		return EXO_TER_WALL;
 	if (id == EXO_TILE_SPRING)
@@ -105,10 +115,11 @@ ExoTerrain exo_terrain_kind(ExoCourse course, uint16_t id)
 	return EXO_TER_NONE;
 }
 
-int exo_terrain_is_bush_tl(ExoCourse course, uint16_t tl, uint16_t tr,
+int exo_terrain_is_bush_tl(ExoCourse course, const ExoTilemap *m,
+                           uint16_t tl, uint16_t tr,
                            uint16_t bl, uint16_t br)
 {
-	const int c = EXO_DP1_COLS;
+	int c = exo_terrain_cols(course, m);
 	if (course != EXO_COURSE_DP1)
 		return 0;
 	if (at(c, tl, 9, 0) && at(c, tr, 10, 0) && at(c, bl, 3, 1) && at(c, br, 4, 1))
