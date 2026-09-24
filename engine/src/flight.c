@@ -36,7 +36,6 @@ float exo_flight_vmax(const ExoFlight *f)
 
 static void place_trees(ExoFlight *f)
 {
-	/* ao longo da estrada norte, a bloquear o percurso ate ao pad */
 	static const float P[][4] = {
 		{  0.0f,  -3.0f, 28.0f, 6.0f },
 		{ -2.2f,   1.0f, 34.0f, 7.0f },
@@ -74,6 +73,7 @@ void exo_flight_reset_run(ExoFlight *f)
 	f->flying = 0;
 	f->grounded = 1;
 	f->charge = 0.0f;
+	f->charge_armed = 0;
 }
 
 void exo_flight_init(ExoFlight *f, ExoPilot pilot)
@@ -173,9 +173,14 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	else
 		f->charge -= dt / EXO_FLIGHT_CHARGE_DECAY;
 	f->charge = clampf(f->charge, 0.0f, 1.0f);
-	stable = f->charge > 0.02f;
 
-	/* modo HIGH/LOW so pela velocidade */
+	/* histerese da barra: arma no cheio, desarma no vazio */
+	if (f->charge >= 1.0f)
+		f->charge_armed = 1;
+	else if (f->charge <= 0.0f)
+		f->charge_armed = 0;
+	stable = f->charge_armed && f->charge > 0.0f;
+
 	if (f->mode == EXO_FLIGHT_LOW && f->speed >= EXO_FLIGHT_HYST_ENTER)
 		f->mode = EXO_FLIGHT_HIGH;
 	else if (f->mode == EXO_FLIGHT_HIGH && f->speed <= EXO_FLIGHT_HYST_LEAVE)
@@ -314,7 +319,6 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 			f->flying = 1;
 	}
 
-	/* gravidade so quando a barra nao segura a altura */
 	if (!(stable && f->flying))
 		f->vy -= EXO_FLIGHT_GRAV * dt;
 
@@ -366,7 +370,6 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	f->cell_x = (int)floorf(f->x / EXO_FLIGHT_CELL);
 	f->cell_z = (int)floorf(f->z / EXO_FLIGHT_CELL);
 
-	/* cronometro: sai da zona de spawn -> corre; pousa no pad -> para */
 	if (f->run == EXO_RUN_WAIT && f->speed > 4.0f)
 		f->run = EXO_RUN_GO;
 	if (f->run == EXO_RUN_GO) {
