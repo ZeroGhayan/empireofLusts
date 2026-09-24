@@ -37,8 +37,8 @@ LIBS	:= -lcitro2d -lcitro3d -lctru -lm
 
 LIBDIRS	:= $(CTRULIB)
 
-APP_TITLE       := EXOVERSE
-APP_DESCRIPTION := FT2 dummy + RomFS sprite
+APP_TITLE       := Empire of Lusts
+APP_DESCRIPTION := Flight prototype
 APP_AUTHOR      := Pedro Juliace
 
 #---------------------------------------------------------------------------------
@@ -120,7 +120,8 @@ endif
 #---------------------------------------------------------------------------------
 all:
 	@python3 $(CURDIR)/gfx/mk_p1.py
-	@mkdir -p $(BUILD) $(GFXBUILD)
+	@python3 $(CURDIR)/gfx/mk_flight.py
+	@mkdir -p $(BUILD) $(GFXBUILD) $(CURDIR)/romfs/flight
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 #---------------------------------------------------------------------------------
