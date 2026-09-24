@@ -5,10 +5,9 @@ import shutil
 import struct
 import zlib
 
-DIR = os.path.dirname(os.path.abspath(__file))
+DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(DIR, "..", "..", ".."))
 SRC = os.path.join(DIR, "pilot_src")
-ROM = os.path.join(DIR, "..", "romfs", "flight")
 
 FRAMES = ("idle", "low", "high", "flight")
 WHO = ("Shirammy", "Rexxi")
