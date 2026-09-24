@@ -10,6 +10,8 @@
 #define EXO_FLIGHT_RENDER        18
 #define EXO_FLIGHT_RENDER_MIN    4
 #define EXO_FLIGHT_RENDER_MAX    20
+#define EXO_FLIGHT_HYST_ENTER    72.0f
+#define EXO_FLIGHT_HYST_LEAVE    28.0f
 #define EXO_FLIGHT_NEAR          6.0f
 #define EXO_FLIGHT_GRAV          90.0f
 #define EXO_FLIGHT_FOCAL         210.0f
@@ -21,7 +23,9 @@
 #define EXO_FLIGHT_CHARGE_DECAY  9.00f
 #define EXO_FLIGHT_BANK_MAX      0.42f
 #define EXO_FLIGHT_SPRING_VY     110.0f
-#define EXO_FLIGHT_PIN_Y         160.0f
+#define EXO_FLIGHT_PIN_LOW       198.0f
+#define EXO_FLIGHT_PIN_FLY       160.0f
+#define EXO_FLIGHT_TREE_MAX      8
 
 typedef enum ExoFlightMode {
 	EXO_FLIGHT_LOW = 0,
@@ -38,6 +42,12 @@ typedef enum ExoCamRef {
 	EXO_CAM_PILOT
 } ExoCamRef;
 
+typedef enum ExoRunState {
+	EXO_RUN_WAIT = 0,
+	EXO_RUN_GO,
+	EXO_RUN_DONE
+} ExoRunState;
+
 typedef struct ExoPilotStats {
 	float vmax;
 	float walk;
@@ -51,6 +61,12 @@ typedef struct ExoPilotStats {
 	const char *hud_unit;
 	const char *name;
 } ExoPilotStats;
+
+typedef struct ExoTree {
+	float x, z;
+	float h;
+	float r;
+} ExoTree;
 
 typedef struct ExoFlight {
 	ExoTilemap map;
@@ -67,7 +83,6 @@ typedef struct ExoFlight {
 	float focal;
 	float bank;
 	float charge;
-	int   charge_armed;
 	int   grounded;
 	int   flying;
 	int   cell_x, cell_z;
@@ -79,12 +94,18 @@ typedef struct ExoFlight {
 	float pad_x, pad_y;
 	float move_x, move_z;
 	float wish_x, wish_z;
+	ExoTree trees[EXO_FLIGHT_TREE_MAX];
+	int    tree_n;
+	ExoRunState run;
+	float run_t;
+	float best_t;
 } ExoFlight;
 
 const ExoPilotStats *exo_pilot_stats(ExoPilot p);
 
 void  exo_flight_init(ExoFlight *f, ExoPilot pilot);
 void  exo_flight_set_pilot(ExoFlight *f, ExoPilot pilot);
+void  exo_flight_reset_run(ExoFlight *f);
 void  exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt);
 float exo_flight_vmax(const ExoFlight *f);
 float exo_flight_hud_speed(const ExoFlight *f);
@@ -95,6 +116,8 @@ void  exo_flight_eye_offset(const ExoFlight *f, float slider, int eye_sign,
 
 int   exo_flight_project(const ExoFlight *f, float wx, float wz,
                          float eye_x, float *sx, float *sy);
+int   exo_flight_project3(const ExoFlight *f, float wx, float wy, float wz,
+                          float eye_x, float *sx, float *sy);
 
 int   exo_flight_clip_quad(const ExoFlight *f, float wx, float wz, float cell,
                            float eye_x, float sx[6], float sy[6], int *nv);

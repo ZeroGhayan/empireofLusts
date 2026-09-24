@@ -3,11 +3,12 @@
 
 #include "exo/types.h"
 
-#define EXO_ETM_MAGIC    0x314D5445u /* 'ETM1' little-endian */
+#define EXO_ETM_MAGIC    0x314D5445u
 #define EXO_TILEMAP_MAX  128
 #define EXO_TILE_PX      32
 #define EXO_TILE_MAX     1024
 #define EXO_TILE_WALL    1
+#define EXO_TILE_PAD     5
 #define EXO_TILE_SPRING  6
 
 typedef struct ExoTilemap {
@@ -22,10 +23,12 @@ typedef struct ExoTilemap {
 void     exo_tilemap_clear(ExoTilemap *m);
 void     exo_tilemap_demo(ExoTilemap *m);
 void     exo_tilemap_place_springs(ExoTilemap *m);
+void     exo_tilemap_place_pad(ExoTilemap *m);
 bool     exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size);
 uint16_t exo_tilemap_at(const ExoTilemap *m, int x, int y);
 bool     exo_tilemap_solid(const ExoTilemap *m, int x, int y);
 bool     exo_tilemap_spring(const ExoTilemap *m, int x, int y);
+bool     exo_tilemap_pad(const ExoTilemap *m, int x, int y);
 
 void     exo_tile_index_rgb(uint16_t idx, uint8_t *r, uint8_t *g, uint8_t *b);
 uint16_t exo_tile_rgb_index(uint8_t r, uint8_t g, uint8_t b);
