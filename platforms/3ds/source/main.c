@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* citro2d C2D_Color32 e inline, nao constante — nao serve em static init */
 #define RGB32(r, g, b) \
 	((u32)(r) | ((u32)(g) << 8) | ((u32)(b) << 16) | (255u << 24))
 
@@ -99,7 +98,8 @@ static void draw_layers(ExoEye eye, const ExoFlight *f)
 
 	for (i = 0; i < 3; ++i) {
 		float par = exo_parallax(depths[i], eye);
-		float x = (float)((int)(-scroll * (0.15f + 0.25f * (float)i) + par) % 400);
+		int ix = (int)(-scroll * (0.15f + 0.25f * (float)i) + par);
+		float x = (float)((ix % 400 + 400) % 400);
 		if (g_have_bg[i]) {
 			C2D_Image img = C2D_SpriteSheetGetImage(g_bg[i], 0);
 			C2D_DrawImageAt(img, x - 400.0f, 0.0f, 0.1f + 0.05f * (float)i, NULL, 1.0f, 1.0f);
@@ -110,13 +110,6 @@ static void draw_layers(ExoEye eye, const ExoFlight *f)
 			                  800.0f, 36.0f - (float)i * 6.0f, fallback[i]);
 		}
 	}
-}
-
-static void draw_quad(float x0, float y0, float x1, float y1,
-                      float x2, float y2, float x3, float y3, u32 col)
-{
-	C2D_DrawTriangle(x0, y0, col, x1, y1, col, x2, y2, col, 0.3f);
-	C2D_DrawTriangle(x0, y0, col, x2, y2, col, x3, y3, col, 0.3f);
 }
 
 static void draw_floor(ExoEye eye, ExoFlight *f)
@@ -130,29 +123,48 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	exo_flight_eye_offset(f, exo_slider_3d(), (int)eye, &ox, &oy);
 	(void)oy;
 
-	for (dz = -2; dz <= R; ++dz) {
+	/* longe → perto, para o chão perto tapar o longe */
+	for (dz = R; dz >= -3; --dz) {
 		for (dx = -R; dx <= R; ++dx) {
 			int tx = cx + dx;
 			int tz = cz + dz;
 			float wx = (float)tx * EXO_FLIGHT_CELL;
 			float wz = (float)tz * EXO_FLIGHT_CELL;
 			float s[4], t[4];
+			int vis[4];
 			int ok = 0;
-			uint16_t id;
 			u32 col;
+			int i;
 
-			if (exo_flight_project(f, wx, wz, ox, &s[0], &t[0])) ok++;
-			if (exo_flight_project(f, wx + EXO_FLIGHT_CELL, wz, ox, &s[1], &t[1])) ok++;
-			if (exo_flight_project(f, wx + EXO_FLIGHT_CELL, wz + EXO_FLIGHT_CELL, ox, &s[2], &t[2])) ok++;
-			if (exo_flight_project(f, wx, wz + EXO_FLIGHT_CELL, ox, &s[3], &t[3])) ok++;
-			if (ok < 4)
+			if (tx < 0 || tz < 0 || tx >= (int)f->map.w || tz >= (int)f->map.h)
 				continue;
 
-			id = exo_tilemap_at(&f->map, tx, tz);
-			col = tile_color(id);
-			draw_quad(s[0], t[0], s[1], t[1], s[2], t[2], s[3], t[3], col);
+			vis[0] = exo_flight_project(f, wx, wz, ox, &s[0], &t[0]);
+			vis[1] = exo_flight_project(f, wx + EXO_FLIGHT_CELL, wz, ox, &s[1], &t[1]);
+			vis[2] = exo_flight_project(f, wx + EXO_FLIGHT_CELL, wz + EXO_FLIGHT_CELL, ox, &s[2], &t[2]);
+			vis[3] = exo_flight_project(f, wx, wz + EXO_FLIGHT_CELL, ox, &s[3], &t[3]);
+			for (i = 0; i < 4; ++i)
+				ok += vis[i];
+			if (ok < 3)
+				continue;
+
+			col = tile_color(exo_tilemap_at(&f->map, tx, tz));
+			if (ok == 4) {
+				C2D_DrawTriangle(s[0], t[0], col, s[1], t[1], col, s[2], t[2], col, 0.3f);
+				C2D_DrawTriangle(s[0], t[0], col, s[2], t[2], col, s[3], t[3], col, 0.3f);
+			} else {
+				int a = -1, b = -1, c = -1;
+				for (i = 0; i < 4; ++i) {
+					if (!vis[i]) continue;
+					if (a < 0) a = i;
+					else if (b < 0) b = i;
+					else c = i;
+				}
+				if (c >= 0)
+					C2D_DrawTriangle(s[a], t[a], col, s[b], t[b], col, s[c], t[c], col, 0.3f);
+			}
 			drawn++;
-			if (drawn >= 256)
+			if (drawn >= 280)
 				goto done;
 		}
 	}
@@ -164,11 +176,12 @@ static void draw_pilot(const ExoFlight *f)
 {
 	float x = 200.0f, y, w, h;
 	int frame = 0;
+	float hop = f->y * 1.1f;
 
 	if (f->mode == EXO_FLIGHT_HIGH) {
-		y = 148.0f; w = 36.0f; h = 22.0f; frame = 1;
+		y = 148.0f - hop; w = 36.0f; h = 22.0f; frame = 1;
 	} else {
-		y = 132.0f; w = 28.0f; h = 40.0f; frame = 0;
+		y = 132.0f - hop; w = 28.0f; h = 40.0f; frame = 0;
 	}
 
 	if (g_have_pilot) {
@@ -212,9 +225,9 @@ static void draw_hud(const ExoFlight *f)
 	exo_text(8.0f, 80.0f, 0.45f, COL_DIM, line);
 	snprintf(line, sizeof(line), "TILE %03d %03d  DRAW %d", f->cell_x, f->cell_z, f->tiles_drawn);
 	exo_text(8.0f, 104.0f, 0.45f, COL_DIM, line);
-	snprintf(line, sizeof(line), "PAD move  L/R look  B brake");
+	snprintf(line, sizeof(line), "A hold speed   B jump");
 	exo_text(8.0f, 160.0f, 0.4f, COL_DIM, line);
-	snprintf(line, sizeof(line), "X sister   START pause");
+	snprintf(line, sizeof(line), "PAD move  L/R look  X sister");
 	exo_text(8.0f, 180.0f, 0.4f, COL_DIM, line);
 	if (g_paused)
 		exo_text(8.0f, 208.0f, 0.5f, COL_ACCENT, "PAUSED");
