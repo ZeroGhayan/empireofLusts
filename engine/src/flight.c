@@ -1,6 +1,7 @@
 #include "exo/flight.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
 static const ExoPilotStats STATS[2] = {
 	{
@@ -34,41 +35,107 @@ float exo_flight_vmax(const ExoFlight *f)
 	return exo_pilot_stats(f->pilot)->vmax;
 }
 
-static void place_trees(ExoFlight *f)
+static void add_tree_cell(ExoFlight *f, int cx, int cz, float h)
 {
-	static const float P[][4] = {
-		{  0.0f,  -3.0f, 28.0f, 6.0f },
-		{ -2.2f,   1.0f, 34.0f, 7.0f },
-		{  2.4f,   4.0f, 30.0f, 6.5f },
-		{  0.0f,   8.0f, 40.0f, 8.0f },
-		{ -2.8f,  12.0f, 36.0f, 7.0f },
-		{  2.6f,  15.0f, 32.0f, 6.5f },
-		{  0.0f,  10.5f, 22.0f, 5.5f },
-		{ -1.5f,  16.5f, 26.0f, 6.0f }
-	};
-	float mid = EXO_TILEMAP_MAX * 0.5f * EXO_FLIGHT_CELL;
 	int i;
+	if (f->tree_n >= EXO_FLIGHT_TREE_MAX)
+		return;
+	if (cx <= 0 || cz <= 0 || cx >= (int)f->map.w - 1 || cz >= (int)f->map.h - 1)
+		return;
+	for (i = 0; i < f->tree_n; ++i)
+		if (f->trees[i].cx == cx && f->trees[i].cz == cz)
+			return;
+	f->trees[f->tree_n].cx = cx;
+	f->trees[f->tree_n].cz = cz;
+	f->trees[f->tree_n].h = h;
+	f->tree_n++;
+}
 
-	f->tree_n = 8;
-	for (i = 0; i < 8; ++i) {
-		f->trees[i].x = mid + P[i][0] * EXO_FLIGHT_CELL;
-		f->trees[i].z = mid + P[i][1] * EXO_FLIGHT_CELL;
-		f->trees[i].h = P[i][2];
-		f->trees[i].r = P[i][3];
+static void place_demo_trees(ExoFlight *f)
+{
+	int mid = EXO_TILEMAP_MAX / 2;
+	static const int P[][2] = {
+		{ 0, -3 }, { -2, 1 }, { 2, 4 }, { 0, 8 },
+		{ -3, 12 }, { 3, 15 }, { 0, 11 }, { -2, 16 }
+	};
+	int i;
+	f->tree_n = 0;
+	for (i = 0; i < 8; ++i)
+		add_tree_cell(f, mid + P[i][0], mid + P[i][1], 28.0f + (float)(i % 4) * 4.0f);
+}
+
+static unsigned urand(unsigned *s)
+{
+	*s = *s * 1664525u + 1013904223u;
+	return *s;
+}
+
+static void setup_ss4_goals(ExoFlight *f)
+{
+	unsigned rng = 0xC0FFEEu ^ (unsigned)f->map.tile_count;
+	int tries, i, cx, cz, mid;
+	int chosen[3][2];
+	int n = 0;
+
+	mid = (int)f->map.w / 2;
+	f->fake_n = 0;
+	for (tries = 0; tries < 400 && n < 3; ++tries) {
+		cx = 8 + (int)(urand(&rng) % (unsigned)(f->map.w - 16));
+		cz = 8 + (int)(urand(&rng) % (unsigned)(f->map.h - 16));
+		if (exo_tilemap_solid(&f->map, cx, cz))
+			continue;
+		if (abs(cx - mid) < 3 && abs(cz - mid) < 3)
+			continue;
+		chosen[n][0] = cx;
+		chosen[n][1] = cz;
+		n++;
+	}
+	if (n < 3) {
+		chosen[0][0] = mid + 10; chosen[0][1] = mid + 16;
+		chosen[1][0] = mid - 14; chosen[1][1] = mid + 8;
+		chosen[2][0] = mid + 6;  chosen[2][1] = mid - 18;
+		n = 3;
+	}
+	f->goal_cx = chosen[0][0];
+	f->goal_cz = chosen[0][1];
+	f->map.cells[f->goal_cz * f->map.w + f->goal_cx] = EXO_TILE_PAD;
+	f->fake_n = 2;
+	for (i = 1; i < 3; ++i) {
+		f->fake_cx[i - 1] = chosen[i][0];
+		f->fake_cz[i - 1] = chosen[i][1];
+		f->map.cells[chosen[i][1] * f->map.w + chosen[i][0]] = EXO_TILE_PAD;
+	}
+}
+
+static void setup_dp1_trees(ExoFlight *f)
+{
+	int x, z;
+	f->tree_n = 0;
+	for (z = 4; z < (int)f->map.h - 4 && f->tree_n < EXO_FLIGHT_TREE_MAX; z += 5) {
+		for (x = 4; x < (int)f->map.w - 4 && f->tree_n < EXO_FLIGHT_TREE_MAX; x += 5) {
+			uint16_t t = exo_tilemap_at(&f->map, x, z);
+			if (t >= 8 || t == 1)
+				add_tree_cell(f, x, z, 30.0f + (float)((x + z) % 5) * 3.0f);
+		}
 	}
 }
 
 void exo_flight_reset_run(ExoFlight *f)
 {
+	float mx = (float)f->map.w * 0.5f;
+	float mz = (float)f->map.h * 0.5f;
 	f->run = EXO_RUN_WAIT;
 	f->run_t = 0.0f;
-	f->x = (EXO_TILEMAP_MAX * 0.5f) * EXO_FLIGHT_CELL;
-	f->z = (EXO_TILEMAP_MAX * 0.5f - 8.0f) * EXO_FLIGHT_CELL;
+	f->laps = 0;
+	f->lap_chk = 0;
+	f->x = mx * EXO_FLIGHT_CELL;
+	f->z = (mz - 8.0f) * EXO_FLIGHT_CELL;
 	f->y = 0.0f;
 	f->vy = 0.0f;
 	f->speed = 0.0f;
 	f->cruise = 0.0f;
 	f->yaw = 0.0f;
+	f->pitch = 0.0f;
 	f->mode = EXO_FLIGHT_LOW;
 	f->flying = 0;
 	f->grounded = 1;
@@ -76,19 +143,44 @@ void exo_flight_reset_run(ExoFlight *f)
 	f->charge_armed = 0;
 }
 
+static void finish_course_setup(ExoFlight *f)
+{
+	if (f->course == EXO_COURSE_SS4)
+		setup_ss4_goals(f);
+	else if (f->course == EXO_COURSE_DP1)
+		setup_dp1_trees(f);
+	else {
+		place_demo_trees(f);
+		f->goal_cx = (int)f->map.w / 2;
+		f->goal_cz = (int)f->map.h / 2 + 18;
+	}
+	exo_flight_reset_run(f);
+}
+
+int exo_flight_load_map(ExoFlight *f, ExoCourse course, const void *etm, uint32_t size)
+{
+	f->course = course;
+	f->tree_n = 0;
+	f->fake_n = 0;
+	if (etm && size && exo_tilemap_load(&f->map, etm, size)) {
+		finish_course_setup(f);
+		return 1;
+	}
+	f->course = EXO_COURSE_DEMO;
+	exo_tilemap_demo(&f->map);
+	finish_course_setup(f);
+	return 0;
+}
+
 void exo_flight_init(ExoFlight *f, ExoPilot pilot)
 {
 	memset(f, 0, sizeof(*f));
-	exo_tilemap_demo(&f->map);
 	f->pilot = pilot;
-	f->mode = EXO_FLIGHT_LOW;
 	f->cam_ref = EXO_CAM_SURFACE;
-	f->best_t = 0.0f;
 	f->focal = EXO_FLIGHT_FOCAL;
 	f->render_r = EXO_FLIGHT_RENDER;
 	f->draw_cap = 48 + EXO_FLIGHT_RENDER * EXO_FLIGHT_RENDER;
-	place_trees(f);
-	exo_flight_reset_run(f);
+	exo_flight_load_map(f, EXO_COURSE_DEMO, NULL, 0);
 }
 
 void exo_flight_set_pilot(ExoFlight *f, ExoPilot pilot)
@@ -109,10 +201,11 @@ static bool blocked(const ExoFlight *f, float x, float z)
 	if (exo_tilemap_solid(&f->map, cx, cz))
 		return true;
 	for (i = 0; i < f->tree_n; ++i) {
-		float dx = x - f->trees[i].x;
-		float dz = z - f->trees[i].z;
-		if (dx * dx + dz * dz < f->trees[i].r * f->trees[i].r &&
-		    f->y < f->trees[i].h - 2.0f)
+		float tx = ((float)f->trees[i].cx + 0.5f) * EXO_FLIGHT_CELL;
+		float tz = ((float)f->trees[i].cz + 0.5f) * EXO_FLIGHT_CELL;
+		float dx = x - tx;
+		float dz = z - tz;
+		if (dx * dx + dz * dz < 36.0f && f->y < f->trees[i].h - 2.0f)
 			return true;
 	}
 	return false;
@@ -138,11 +231,12 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	int hold_y = in && (in->held & EXO_BTN_Y);
 	int tap_b = in && (in->down & EXO_BTN_B);
 	int tap_zr = in && (in->down & EXO_BTN_ZR);
-	float nx, nz, step, cap, turn = 0.0f;
+	int hold_l = in && (in->held & EXO_BTN_L);
+	int hold_r = in && (in->held & EXO_BTN_R);
+	float nx, nz, step, cap;
 	float vmax = exo_flight_vmax(f);
-	float fwd_x = sinf(f->yaw);
-	float fwd_z = cosf(f->yaw);
-	float rgt_x, rgt_z;
+	float fwd_x, fwd_z, rgt_x, rgt_z;
+	float strafe;
 	int stable;
 
 	if (dt <= 0.0f || dt > 0.05f)
@@ -162,19 +256,11 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	if (tap_zr)
 		f->cam_ref = (f->cam_ref == EXO_CAM_SURFACE) ? EXO_CAM_PILOT : EXO_CAM_SURFACE;
 
-	if (in) {
-		if (in->held & EXO_BTN_L) turn += 1.0f;
-		if (in->held & EXO_BTN_R) turn -= 1.0f;
-		turn -= in->cstick_x;
-	}
-
 	if (hold_y)
 		f->charge += dt / EXO_FLIGHT_CHARGE_SEC;
 	else
 		f->charge -= dt / EXO_FLIGHT_CHARGE_DECAY;
 	f->charge = clampf(f->charge, 0.0f, 1.0f);
-
-	/* histerese da barra: arma no cheio, desarma no vazio */
 	if (f->charge >= 1.0f)
 		f->charge_armed = 1;
 	else if (f->charge <= 0.0f)
@@ -187,11 +273,21 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		f->mode = EXO_FLIGHT_LOW;
 
 	f->flying = (f->mode == EXO_FLIGHT_HIGH && !f->grounded);
+	strafe = (hold_r ? 1.0f : 0.0f) - (hold_l ? 1.0f : 0.0f);
 
 	if (f->mode == EXO_FLIGHT_HIGH || f->flying) {
 		f->yaw += sx * s->turn_high * dt;
 		fwd_x = sinf(f->yaw);
 		fwd_z = cosf(f->yaw);
+		rgt_x =  cosf(f->yaw);
+		rgt_z = -sinf(f->yaw);
+
+		if (f->flying) {
+			float want_p = (-sy) * EXO_FLIGHT_PITCH_MAX;
+			f->pitch += (want_p - f->pitch) * clampf(dt * 6.0f, 0.0f, 1.0f);
+		} else {
+			f->pitch += (0.0f - f->pitch) * clampf(dt * 5.0f, 0.0f, 1.0f);
+		}
 
 		if (stable) {
 			if (hold_y)
@@ -211,33 +307,28 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 			f->cruise = f->speed;
 		}
 
-		step = f->speed * dt;
+		step = f->speed * cosf(f->pitch) * dt;
 		if (step > EXO_FLIGHT_CELL * 0.45f)
 			step = EXO_FLIGHT_CELL * 0.45f;
 		nx = f->x + fwd_x * step;
 		nz = f->z + fwd_z * step;
+		if (!f->flying && fabsf(strafe) > 0.1f) {
+			nx += rgt_x * strafe * s->walk * dt;
+			nz += rgt_z * strafe * s->walk * dt;
+		}
 		f->wish_x = fwd_x;
 		f->wish_z = fwd_z;
-
-		if (f->flying) {
-			float want;
-			if (fabsf(sy) < 0.12f)
-				want = stable ? 0.0f : -14.0f;
-			else
-				want = (-sy) * s->climb;
-			f->vy += (want - f->vy) * clampf(dt * 8.0f, 0.0f, 1.0f);
-		}
 	} else {
 		float mx, mz, mag;
-
-		f->yaw += turn * s->turn_low * dt;
+		f->yaw += sx * s->turn_low * dt;
+		f->pitch += (0.0f - f->pitch) * clampf(dt * 5.0f, 0.0f, 1.0f);
 		fwd_x = sinf(f->yaw);
 		fwd_z = cosf(f->yaw);
 		rgt_x =  cosf(f->yaw);
 		rgt_z = -sinf(f->yaw);
 
-		mx = rgt_x * sx + fwd_x * sy;
-		mz = rgt_z * sx + fwd_z * sy;
+		mx = rgt_x * strafe + fwd_x * sy;
+		mz = rgt_z * strafe + fwd_z * sy;
 		mag = sqrtf(mx * mx + mz * mz);
 		if (mag > 1.0f) {
 			mx /= mag;
@@ -319,8 +410,17 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 			f->flying = 1;
 	}
 
-	if (!(stable && f->flying))
+	if (f->flying) {
+		float climb = f->speed * sinf(f->pitch);
+		if (stable)
+			f->vy += (climb - f->vy) * clampf(dt * 8.0f, 0.0f, 1.0f);
+		else {
+			f->vy += (climb - f->vy) * clampf(dt * 4.0f, 0.0f, 1.0f);
+			f->vy -= EXO_FLIGHT_GRAV * dt;
+		}
+	} else {
 		f->vy -= EXO_FLIGHT_GRAV * dt;
+	}
 
 	f->y += f->vy * dt;
 	if (f->y <= 0.0f) {
@@ -328,6 +428,7 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		if (f->vy < 0.0f)
 			f->vy = 0.0f;
 		f->grounded = 1;
+		f->pitch += (0.0f - f->pitch) * clampf(dt * 8.0f, 0.0f, 1.0f);
 		if (f->mode != EXO_FLIGHT_HIGH)
 			f->flying = 0;
 	} else {
@@ -374,8 +475,21 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		f->run = EXO_RUN_GO;
 	if (f->run == EXO_RUN_GO) {
 		f->run_t += dt;
-		if (f->grounded && f->y < 1.5f &&
-		    exo_tilemap_pad(&f->map, f->cell_x, f->cell_z)) {
+		if (f->course == EXO_COURSE_DP1) {
+			int midz = (int)f->map.h / 2;
+			if (!f->lap_chk && f->cell_z > midz + 10)
+				f->lap_chk = 1;
+			if (f->lap_chk && f->cell_z < midz - 6 && f->grounded) {
+				f->laps++;
+				f->lap_chk = 0;
+				if (f->laps >= 3) {
+					f->run = EXO_RUN_DONE;
+					if (f->best_t <= 0.0f || f->run_t < f->best_t)
+						f->best_t = f->run_t;
+				}
+			}
+		} else if (f->grounded && f->y < 1.5f &&
+		           f->cell_x == f->goal_cx && f->cell_z == f->goal_cz) {
 			f->run = EXO_RUN_DONE;
 			if (f->best_t <= 0.0f || f->run_t < f->best_t)
 				f->best_t = f->run_t;
@@ -426,9 +540,22 @@ static void to_cam(const ExoFlight *f, float wx, float wz, float eye,
 static void cam_to_screen(const ExoFlight *f, float lx, float lz, float wy,
                           float *sx, float *sy)
 {
-	float k = EXO_FLIGHT_FOCAL / lz;
+	float ly = f->cam_h - wy;
+	float k;
+
+	if (f->cam_ref == EXO_CAM_PILOT) {
+		float cp = cosf(f->pitch);
+		float sp = sinf(f->pitch);
+		float ly2 = ly * cp - lz * sp;
+		float lz2 = ly * sp + lz * cp;
+		ly = ly2;
+		lz = lz2;
+	}
+	if (lz < EXO_FLIGHT_NEAR)
+		lz = EXO_FLIGHT_NEAR;
+	k = EXO_FLIGHT_FOCAL / lz;
 	*sx = 200.0f + lx * k;
-	*sy = f->horizon + (f->cam_h - wy) * k;
+	*sy = f->horizon + ly * k;
 }
 
 void exo_flight_apply_ref(const ExoFlight *f, float *sx, float *sy)
@@ -455,7 +582,7 @@ int exo_flight_project3(const ExoFlight *f, float wx, float wy, float wz,
 {
 	float lx, lz;
 	to_cam(f, wx, wz, eye_x, &lx, &lz);
-	if (lz < EXO_FLIGHT_NEAR)
+	if (lz < EXO_FLIGHT_NEAR * 0.5f)
 		return 0;
 	cam_to_screen(f, lx, lz, wy, sx, sy);
 	exo_flight_apply_ref(f, sx, sy);
