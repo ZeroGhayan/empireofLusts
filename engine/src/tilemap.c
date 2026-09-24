@@ -1,12 +1,37 @@
 #include "exo/tilemap.h"
 #include <string.h>
 
+static uint16_t guess_cols(uint16_t count)
+{
+	uint16_t c;
+
+	if (count <= 1)
+		return 1;
+	c = 1;
+	while ((uint32_t)c * (uint32_t)c < (uint32_t)count)
+		c++;
+	return c;
+}
+
 void exo_tilemap_clear(ExoTilemap *m)
 {
 	memset(m, 0, sizeof(*m));
 	m->w = EXO_TILEMAP_MAX;
 	m->h = EXO_TILEMAP_MAX;
 	m->tile_px = EXO_TILE_PX;
+	m->atlas_cols = 8;
+}
+
+void exo_tilemap_set_atlas(ExoTilemap *m, uint16_t cols, uint16_t count)
+{
+	if (!m)
+		return;
+	if (count)
+		m->tile_count = count;
+	if (cols)
+		m->atlas_cols = cols;
+	else if (m->tile_count)
+		m->atlas_cols = guess_cols(m->tile_count);
 }
 
 void exo_tile_index_rgb(uint16_t idx, uint8_t *r, uint8_t *g, uint8_t *b)
@@ -93,6 +118,7 @@ void exo_tilemap_demo(ExoTilemap *m)
 
 	exo_tilemap_clear(m);
 	m->tile_count = 7;
+	m->atlas_cols = 8;
 	m->loaded = true;
 	mid = EXO_TILEMAP_MAX / 2;
 
@@ -124,7 +150,7 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 {
 	const uint8_t *p = (const uint8_t *)data;
 	uint32_t magic;
-	uint16_t w, h, tile_px, count;
+	uint16_t w, h, tile_px, count, flags;
 	uint32_t n, i, have;
 
 	exo_tilemap_clear(m);
@@ -140,6 +166,7 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 	h       = (uint16_t)(p[6] | (p[7] << 8));
 	tile_px = (uint16_t)(p[8] | (p[9] << 8));
 	count   = (uint16_t)(p[10] | (p[11] << 8));
+	flags   = (uint16_t)(p[12] | (p[13] << 8));
 
 	if (w == 0 || h == 0 || w > EXO_TILEMAP_MAX || h > EXO_TILEMAP_MAX)
 		return false;
@@ -155,6 +182,7 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 	m->h = h;
 	m->tile_px = tile_px;
 	m->tile_count = count;
+	m->atlas_cols = flags ? flags : guess_cols(count ? count : 1);
 	for (i = 0; i < n; ++i) {
 		const uint8_t *c = p + 16 + i * 2;
 		m->cells[i] = (uint16_t)(c[0] | (c[1] << 8));
