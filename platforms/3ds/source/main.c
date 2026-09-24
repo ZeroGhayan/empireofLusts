@@ -250,7 +250,6 @@ static void draw_trees(const ExoFlight *f)
 
 		if (!exo_flight_project3(f, wx, 0.0f, wz, 0.0f, &bx, &by))
 			continue;
-		/* base tem de assentar no chao, nao no ceu */
 		if (by < f->horizon - 2.0f)
 			continue;
 		if (!exo_flight_project3(f, wx, f->trees[i].h, wz, 0.0f, &tx, &ty))
@@ -441,7 +440,7 @@ static void draw_hud(const ExoFlight *f)
 	char line[64];
 	float hud = exo_flight_hud_speed(f);
 	float hud_max = exo_flight_hud_max(f);
-	float bar, vmax = exo_flight_vmax(f);
+	float bar;
 	float rend_t = (float)(f->render_r - EXO_FLIGHT_RENDER_MIN) /
 	               (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN);
 
