@@ -8,21 +8,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define COL_SKY    C2D_Color32(18, 28, 64, 255)
-#define COL_BOT    C2D_Color32(12, 12, 20, 255)
-#define COL_TEXT   C2D_Color32(240, 240, 240, 255)
-#define COL_DIM    C2D_Color32(160, 170, 190, 255)
-#define COL_ACCENT C2D_Color32(255, 210, 64, 255)
+/* citro2d C2D_Color32 e inline, nao constante — nao serve em static init */
+#define RGB32(r, g, b) \
+	((u32)(r) | ((u32)(g) << 8) | ((u32)(b) << 16) | (255u << 24))
 
-static const uint32_t TILE_COL[] = {
-	C2D_Color32( 46, 110,  58, 255),
-	C2D_Color32( 28,  28,  32, 255),
-	C2D_Color32( 58,  62,  74, 255),
-	C2D_Color32(210, 200,  70, 255),
-	C2D_Color32( 90,  86,  70, 255),
-	C2D_Color32( 40,  90, 140, 255),
-	C2D_Color32(160,  70,  50, 255),
-	C2D_Color32( 80, 160,  90, 255)
+#define COL_SKY    RGB32(18, 28, 64)
+#define COL_BOT    RGB32(12, 12, 20)
+#define COL_TEXT   RGB32(240, 240, 240)
+#define COL_DIM    RGB32(160, 170, 190)
+#define COL_ACCENT RGB32(255, 210, 64)
+
+static const u32 TILE_COL[] = {
+	RGB32( 46, 110,  58),
+	RGB32( 28,  28,  32),
+	RGB32( 58,  62,  74),
+	RGB32(210, 200,  70),
+	RGB32( 90,  86,  70),
+	RGB32( 40,  90, 140),
+	RGB32(160,  70,  50),
+	RGB32( 80, 160,  90)
 };
 
 static ExoFlight g_flight;
@@ -32,7 +36,7 @@ static bool g_have_bg[3];
 static bool g_have_pilot;
 static bool g_paused;
 
-static uint32_t tile_color(uint16_t id)
+static u32 tile_color(uint16_t id)
 {
 	unsigned n = (unsigned)(sizeof(TILE_COL) / sizeof(TILE_COL[0]));
 	return TILE_COL[id % n];
@@ -87,10 +91,10 @@ static void draw_layers(ExoEye eye, const ExoFlight *f)
 	unsigned i;
 	float scroll = f->yaw * 40.0f + f->x * 0.02f;
 	float depths[3] = { 4.0f, 10.0f, 18.0f };
-	uint32_t fallback[3] = {
-		C2D_Color32(22, 36, 80, 255),
-		C2D_Color32(70, 50, 110, 255),
-		C2D_Color32(40, 90, 130, 255)
+	static const u32 fallback[3] = {
+		RGB32(22, 36, 80),
+		RGB32(70, 50, 110),
+		RGB32(40, 90, 130)
 	};
 
 	for (i = 0; i < 3; ++i) {
@@ -109,7 +113,7 @@ static void draw_layers(ExoEye eye, const ExoFlight *f)
 }
 
 static void draw_quad(float x0, float y0, float x1, float y1,
-                      float x2, float y2, float x3, float y3, uint32_t col)
+                      float x2, float y2, float x3, float y3, u32 col)
 {
 	C2D_DrawTriangle(x0, y0, col, x1, y1, col, x2, y2, col, 0.3f);
 	C2D_DrawTriangle(x0, y0, col, x2, y2, col, x3, y3, col, 0.3f);
@@ -135,7 +139,7 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 			float s[4], t[4];
 			int ok = 0;
 			uint16_t id;
-			uint32_t col;
+			u32 col;
 
 			if (exo_flight_project(f, wx, wz, ox, &s[0], &t[0])) ok++;
 			if (exo_flight_project(f, wx + EXO_FLIGHT_CELL, wz, ox, &s[1], &t[1])) ok++;
@@ -179,12 +183,12 @@ static void draw_pilot(const ExoFlight *f)
 	}
 
 	if (f->mode == EXO_FLIGHT_HIGH) {
-		C2D_DrawTriangle(x, y, C2D_Color32(240, 80, 70, 255),
-		                 x - 22.0f, y + 20.0f, C2D_Color32(180, 40, 40, 255),
-		                 x + 22.0f, y + 20.0f, C2D_Color32(180, 40, 40, 255), 0.6f);
+		C2D_DrawTriangle(x, y, RGB32(240, 80, 70),
+		                 x - 22.0f, y + 20.0f, RGB32(180, 40, 40),
+		                 x + 22.0f, y + 20.0f, RGB32(180, 40, 40), 0.6f);
 	} else {
-		C2D_DrawRectSolid(x - 10.0f, y, 0.6f, 20.0f, 28.0f, C2D_Color32(70, 180, 255, 255));
-		C2D_DrawRectSolid(x - 8.0f, y - 10.0f, 0.61f, 16.0f, 12.0f, C2D_Color32(240, 200, 160, 255));
+		C2D_DrawRectSolid(x - 10.0f, y, 0.6f, 20.0f, 28.0f, RGB32(70, 180, 255));
+		C2D_DrawRectSolid(x - 8.0f, y - 10.0f, 0.61f, 16.0f, 12.0f, RGB32(240, 200, 160));
 	}
 }
 
@@ -217,10 +221,10 @@ static void draw_hud(const ExoFlight *f)
 	bar = f->speed / s->vmax;
 	if (bar < 0.0f) bar = 0.0f;
 	if (bar > 1.0f) bar = 1.0f;
-	exo_bot_rect(8.0f, 132.0f, 304.0f, 10.0f, C2D_Color32(30, 30, 40, 255));
+	exo_bot_rect(8.0f, 132.0f, 304.0f, 10.0f, RGB32(30, 30, 40));
 	exo_bot_rect(8.0f, 132.0f, 304.0f * bar, 10.0f,
-	             f->mode == EXO_FLIGHT_HIGH ? C2D_Color32(255, 90, 70, 255)
-	                                       : C2D_Color32(80, 180, 255, 255));
+	             f->mode == EXO_FLIGHT_HIGH ? RGB32(255, 90, 70)
+	                                       : RGB32(80, 180, 255));
 }
 
 int main(void)
