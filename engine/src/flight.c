@@ -283,9 +283,13 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		rgt_z = -sinf(f->yaw);
 
 		if (f->flying) {
-			float want_p = (-sy) * EXO_FLIGHT_PITCH_MAX;
-			f->pitch += (want_p - f->pitch) * clampf(dt * 6.0f, 0.0f, 1.0f);
-		} else {
+			if (fabsf(sy) > 0.12f) {
+				float want_p = (-sy) * EXO_FLIGHT_PITCH_MAX;
+				f->pitch += (want_p - f->pitch) * clampf(dt * 6.0f, 0.0f, 1.0f);
+			} else if (!stable) {
+				f->pitch += (0.0f - f->pitch) * clampf(dt * 3.0f, 0.0f, 1.0f);
+			}
+		} else if (!stable) {
 			f->pitch += (0.0f - f->pitch) * clampf(dt * 5.0f, 0.0f, 1.0f);
 		}
 
@@ -321,7 +325,8 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	} else {
 		float mx, mz, mag;
 		f->yaw += sx * s->turn_low * dt;
-		f->pitch += (0.0f - f->pitch) * clampf(dt * 5.0f, 0.0f, 1.0f);
+		if (!stable)
+			f->pitch += (0.0f - f->pitch) * clampf(dt * 5.0f, 0.0f, 1.0f);
 		fwd_x = sinf(f->yaw);
 		fwd_z = cosf(f->yaw);
 		rgt_x =  cosf(f->yaw);
@@ -428,7 +433,8 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		if (f->vy < 0.0f)
 			f->vy = 0.0f;
 		f->grounded = 1;
-		f->pitch += (0.0f - f->pitch) * clampf(dt * 8.0f, 0.0f, 1.0f);
+		if (!stable)
+			f->pitch += (0.0f - f->pitch) * clampf(dt * 8.0f, 0.0f, 1.0f);
 		if (f->mode != EXO_FLIGHT_HIGH)
 			f->flying = 0;
 	} else {
@@ -544,8 +550,8 @@ static void cam_to_screen(const ExoFlight *f, float lx, float lz, float wy,
 	float k;
 
 	if (f->cam_ref == EXO_CAM_PILOT) {
-		float cp = cosf(f->pitch);
-		float sp = sinf(f->pitch);
+		float cp = cosf(-f->pitch);
+		float sp = sinf(-f->pitch);
 		float ly2 = ly * cp - lz * sp;
 		float lz2 = ly * sp + lz * cp;
 		ly = ly2;
@@ -568,7 +574,7 @@ void exo_flight_apply_ref(const ExoFlight *f, float *sx, float *sy)
 		return;
 	if (fabsf(f->bank) < 0.002f)
 		return;
-	b = -f->bank;
+	b = f->bank;
 	c = cosf(b);
 	s = sinf(b);
 	dx = *sx - cx;
