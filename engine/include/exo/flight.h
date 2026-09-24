@@ -22,10 +22,12 @@
 #define EXO_FLIGHT_CHARGE_SEC    1.60f
 #define EXO_FLIGHT_CHARGE_DECAY  9.00f
 #define EXO_FLIGHT_BANK_MAX      0.42f
+#define EXO_FLIGHT_PITCH_MAX     0.55f
 #define EXO_FLIGHT_SPRING_VY     110.0f
 #define EXO_FLIGHT_PIN_LOW       198.0f
 #define EXO_FLIGHT_PIN_FLY       160.0f
-#define EXO_FLIGHT_TREE_MAX      8
+#define EXO_FLIGHT_TREE_MAX      16
+#define EXO_FLIGHT_FAKE_MAX      3
 
 typedef enum ExoFlightMode {
 	EXO_FLIGHT_LOW = 0,
@@ -48,6 +50,12 @@ typedef enum ExoRunState {
 	EXO_RUN_DONE
 } ExoRunState;
 
+typedef enum ExoCourse {
+	EXO_COURSE_DEMO = 0,
+	EXO_COURSE_SS4,
+	EXO_COURSE_DP1
+} ExoCourse;
+
 typedef struct ExoPilotStats {
 	float vmax;
 	float walk;
@@ -62,10 +70,10 @@ typedef struct ExoPilotStats {
 	const char *name;
 } ExoPilotStats;
 
+/* Arvore presa a uma celula do tilemap. */
 typedef struct ExoTree {
-	float x, z;
+	int   cx, cz;
 	float h;
-	float r;
 } ExoTree;
 
 typedef struct ExoFlight {
@@ -73,8 +81,10 @@ typedef struct ExoFlight {
 	ExoPilot   pilot;
 	ExoFlightMode mode;
 	ExoCamRef  cam_ref;
+	ExoCourse  course;
 	float x, y, z;
 	float yaw;
+	float pitch;
 	float speed;
 	float cruise;
 	float vy;
@@ -100,6 +110,12 @@ typedef struct ExoFlight {
 	ExoRunState run;
 	float run_t;
 	float best_t;
+	int    laps;
+	int    lap_chk;
+	int    goal_cx, goal_cz;
+	int    fake_n;
+	int    fake_cx[EXO_FLIGHT_FAKE_MAX];
+	int    fake_cz[EXO_FLIGHT_FAKE_MAX];
 } ExoFlight;
 
 const ExoPilotStats *exo_pilot_stats(ExoPilot p);
@@ -107,6 +123,7 @@ const ExoPilotStats *exo_pilot_stats(ExoPilot p);
 void  exo_flight_init(ExoFlight *f, ExoPilot pilot);
 void  exo_flight_set_pilot(ExoFlight *f, ExoPilot pilot);
 void  exo_flight_reset_run(ExoFlight *f);
+int   exo_flight_load_map(ExoFlight *f, ExoCourse course, const void *etm, uint32_t size);
 void  exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt);
 float exo_flight_vmax(const ExoFlight *f);
 float exo_flight_hud_speed(const ExoFlight *f);
