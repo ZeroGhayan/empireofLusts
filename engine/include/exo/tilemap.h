@@ -23,7 +23,8 @@ typedef struct ExoTilemap {
 	bool     loaded;
 } ExoTilemap;
 
-extern const uint8_t exo_sno_cell[EXO_TILEMAP_MAX * EXO_TILEMAP_MAX];
+extern uint8_t exo_sno_cell[EXO_TILEMAP_MAX * EXO_TILEMAP_MAX];
+void     exo_sno_ensure(void);
 
 void     exo_tilemap_clear(ExoTilemap *m);
 void     exo_tilemap_demo(ExoTilemap *m);
