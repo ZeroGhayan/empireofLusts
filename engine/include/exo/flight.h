@@ -30,6 +30,7 @@
 #define EXO_FLIGHT_FAKE_MAX      3
 #define EXO_FLIGHT_WATER_DROWN   10.0f
 #define EXO_FLIGHT_WALL_H        28.0f
+#define EXO_FLIGHT_BUMPER_H      22.0f
 #define EXO_FLIGHT_BOOST         55.0f
 #define EXO_FLIGHT_SS4_NEED      3
 
@@ -106,6 +107,7 @@ typedef struct ExoFlight {
 	int   render_r;
 	int   draw_cap;
 	float spring_cd;
+	float bounce_cd;
 	float pad_x, pad_y;
 	float move_x, move_z;
 	float wish_x, wish_z;
