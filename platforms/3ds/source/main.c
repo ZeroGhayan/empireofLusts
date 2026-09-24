@@ -1,6 +1,7 @@
 #include "exo/platform.h"
 #include "exo/flight.h"
 #include "exo/tilemap.h"
+#include "texfloor.h"
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -43,6 +44,7 @@ static C2D_SpriteSheet g_shi;
 static C2D_SpriteSheet g_rex;
 static C2D_SpriteSheet g_tiles;
 static int g_tile_n;
+static int g_tile_px = 32;
 static int g_vis_cx[720], g_vis_cz[720], g_vis_n;
 static bool g_have_bg[3];
 static bool g_paused;
@@ -63,6 +65,7 @@ static void load_tileset(ExoCourse c)
 		g_tiles = NULL;
 	}
 	g_tile_n = 0;
+	g_tile_px = (c == EXO_COURSE_DP1) ? 8 : 32;
 	if (c == EXO_COURSE_SS4)
 		g_tiles = C2D_SpriteSheetLoad("romfs:/gfx/ss4_tiles.t3x");
 	else if (c == EXO_COURSE_DP1)
@@ -163,34 +166,6 @@ static void draw_poly(const float *s, const float *t, int n, u32 col)
 		C2D_DrawTriangle(s[0], t[0], col, s[k], t[k], col, s[k + 1], t[k + 1], col, 0.3f);
 }
 
-static void stamp_tile(uint16_t id, const float *sx, const float *sy, int n)
-{
-	C2D_Image img;
-	C2D_DrawParams par;
-	float minx = 9999.0f, maxx = -9999.0f, miny = 9999.0f, maxy = -9999.0f;
-	int i;
-
-	if (!g_tiles || g_tile_n <= 0 || n < 3)
-		return;
-	img = C2D_SpriteSheetGetImage(g_tiles, (int)id % g_tile_n);
-	if (!img.subtex)
-		return;
-	for (i = 0; i < n; ++i) {
-		if (sx[i] < minx) minx = sx[i];
-		if (sx[i] > maxx) maxx = sx[i];
-		if (sy[i] < miny) miny = sy[i];
-		if (sy[i] > maxy) maxy = sy[i];
-	}
-	if (maxx - minx < 2.0f || maxy - miny < 2.0f)
-		return;
-	par.pos.x = minx; par.pos.y = miny;
-	par.pos.w = maxx - minx; par.pos.h = maxy - miny;
-	par.center.x = 0.0f; par.center.y = 0.0f;
-	par.depth = 0.31f;
-	par.angle = 0.0f;
-	C2D_DrawImage(img, &par, NULL);
-}
-
 static int quad_sane(const float *sx, const float *sy, int n, float horizon)
 {
 	int i, on = 0, sky = 0;
@@ -236,6 +211,34 @@ static int emit_tile(ExoFlight *f, float ox, int tx, int tz,
 		(*culled)++;
 		return 1;
 	}
+	id = exo_tilemap_at(&f->map, tx, tz);
+
+	if (g_tiles && g_tile_n > 0) {
+		static const float oxc[4] = { 0.0f, 1.0f, 1.0f, 0.0f };
+		static const float ozc[4] = { 0.0f, 0.0f, 1.0f, 1.0f };
+		float qx[4], qy[4];
+		int i, ok = 1;
+		C2D_Image img;
+
+		for (i = 0; i < 4; ++i) {
+			if (!exo_flight_project3(f, wx + oxc[i] * EXO_FLIGHT_CELL, 0.0f,
+			                       wz + ozc[i] * EXO_FLIGHT_CELL, ox,
+			                       &qx[i], &qy[i]))
+				ok = 0;
+		}
+		if (ok && quad_sane(qx, qy, 4, f->horizon)) {
+			img = C2D_SpriteSheetGetImage(g_tiles, (int)id % g_tile_n);
+			exo_texfloor_quad(img, qx, qy, 4);
+			if (g_vis_n < 720) {
+				g_vis_cx[g_vis_n] = tx;
+				g_vis_cz[g_vis_n] = tz;
+				g_vis_n++;
+			}
+			(*drawn)++;
+			return 1;
+		}
+	}
+
 	if (!exo_flight_clip_quad(f, wx, wz, EXO_FLIGHT_CELL, ox, sx, sy, &nv)) {
 		(*culled)++;
 		return 1;
@@ -244,9 +247,7 @@ static int emit_tile(ExoFlight *f, float ox, int tx, int tz,
 		(*culled)++;
 		return 1;
 	}
-	id = exo_tilemap_at(&f->map, tx, tz);
 	draw_poly(sx, sy, nv, tile_color(id));
-	stamp_tile(id, sx, sy, nv);
 	if (g_vis_n < 720) {
 		g_vis_cx[g_vis_n] = tx;
 		g_vis_cz[g_vis_n] = tz;
@@ -284,6 +285,7 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	exo_flight_eye_offset(f, exo_slider_3d(), (int)eye, &ox, &oy);
 	(void)oy;
 
+	exo_texfloor_begin();
 	for (ring = 0; ring <= R; ++ring) {
 		for (dz = -ring; dz <= ring; ++dz) {
 			for (dx = -ring; dx <= ring; ++dx) {
@@ -299,6 +301,7 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 		}
 	}
 done:
+	exo_texfloor_end();
 	f->tiles_drawn = drawn;
 	f->tiles_culled = culled;
 }
@@ -493,10 +496,9 @@ static void draw_menu(void)
 	exo_text(8.0f, 24.0f, 0.28f, COL_TEXT, "SELECT COURSE");
 	exo_text(8.0f, 48.0f, 0.28f, g_pick == 0 ? COL_ACCENT : COL_DIM, "  SS4  SONIC CD");
 	exo_text(8.0f, 62.0f, 0.28f, g_pick == 1 ? COL_ACCENT : COL_DIM, "  DP1  DONUT PLAINS");
-	exo_text(8.0f, 90.0f, 0.28f, COL_DIM, "SS4  3 PURPLE  1 REAL");
-	exo_text(8.0f, 104.0f, 0.28f, COL_DIM, "DP1  3 LAPS");
+	exo_text(8.0f, 90.0f, 0.28f, COL_DIM, "SS4  32PX  3 PURPLE");
+	exo_text(8.0f, 104.0f, 0.28f, COL_DIM, "DP1  8PX  3 LAPS");
 	exo_text(8.0f, 130.0f, 0.28f, COL_TEXT, "UP/DOWN  A START");
-	exo_text(8.0f, 146.0f, 0.28f, COL_DIM, "NEED tiles.png IN romfs/flight/");
 }
 
 static void draw_hud(const ExoFlight *f)
@@ -522,7 +524,8 @@ static void draw_hud(const ExoFlight *f)
 	exo_text(8.0f, 28.0f, 0.28f, COL_TEXT, line);
 	snprintf(line, sizeof(line), "REAL %.1f P %.2f", (double)f->speed, (double)f->pitch);
 	exo_text(8.0f, 40.0f, 0.28f, COL_DIM, line);
-	snprintf(line, sizeof(line), "TILE %03d %03d  TS %d", f->cell_x, f->cell_z, g_tile_n);
+	snprintf(line, sizeof(line), "TILE %03d %03d TS %d PX %d",
+	         f->cell_x, f->cell_z, g_tile_n, g_tile_px);
 	exo_text(8.0f, 52.0f, 0.28f, COL_DIM, line);
 	snprintf(line, sizeof(line), "DRAW %d/%d", f->tiles_drawn, f->draw_cap);
 	exo_text(8.0f, 64.0f, 0.28f, COL_DIM, line);
@@ -574,6 +577,7 @@ int main(void)
 		return 1;
 	exo_flight_init(&g_flight, EXO_PILOT_SHIRAMMY);
 	load_gfx();
+	exo_texfloor_init();
 	while (exo_frame_begin()) {
 		const ExoInput *in = exo_input();
 		float dt = exo_dt();
@@ -611,6 +615,7 @@ int main(void)
 		exo_render_end();
 		exo_frame_end();
 	}
+	exo_texfloor_fini();
 	if (g_tiles) C2D_SpriteSheetFree(g_tiles);
 	if (g_shi) C2D_SpriteSheetFree(g_shi);
 	if (g_rex) C2D_SpriteSheetFree(g_rex);
