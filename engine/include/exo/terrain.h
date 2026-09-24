@@ -18,7 +18,8 @@ typedef enum ExoTerrain {
 	EXO_TER_BOOST_N,
 	EXO_TER_BOOST_S,
 	EXO_TER_BOOST_E,
-	EXO_TER_BOOST_W
+	EXO_TER_BOOST_W,
+	EXO_TER_BOOST
 } ExoTerrain;
 
 int        exo_terrain_cols(ExoCourse course, const ExoTilemap *m);

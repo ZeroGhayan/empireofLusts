@@ -22,7 +22,7 @@
 #define EXO_FLIGHT_CHARGE_SEC    1.60f
 #define EXO_FLIGHT_CHARGE_DECAY  9.00f
 #define EXO_FLIGHT_BANK_MAX      0.42f
-#define EXO_FLIGHT_PITCH_MAX     0.55f
+#define EXO_FLIGHT_PITCH_MAX     0.28f
 #define EXO_FLIGHT_SPRING_VY     110.0f
 #define EXO_FLIGHT_PIN_LOW       198.0f
 #define EXO_FLIGHT_PIN_FLY       160.0f
@@ -30,9 +30,16 @@
 #define EXO_FLIGHT_FAKE_MAX      3
 #define EXO_FLIGHT_WATER_DROWN   10.0f
 #define EXO_FLIGHT_WALL_H        28.0f
-#define EXO_FLIGHT_BUMPER_H      22.0f
+#define EXO_FLIGHT_BUMPER_H      32.0f
+#define EXO_FLIGHT_STEP_UP       10.0f
 #define EXO_FLIGHT_BOOST         55.0f
 #define EXO_FLIGHT_SS4_NEED      3
+#define EXO_SNO_TRACK_H         50
+#define EXO_SNO_RAMP_LO         30
+#define EXO_SNO_RAMP_HI         124
+#define EXO_SNO_CLOUD_Y         10.0f
+#define EXO_SNO_FINISH_PEAK     8.0f
+#define EXO_DP1_BRIDGE_H        ((int16_t)-5)
 
 typedef enum ExoFlightMode {
 	EXO_FLIGHT_LOW = 0,
@@ -58,7 +65,8 @@ typedef enum ExoRunState {
 typedef enum ExoCourse {
 	EXO_COURSE_DEMO = 0,
 	EXO_COURSE_SS4,
-	EXO_COURSE_DP1
+	EXO_COURSE_DP1,
+	EXO_COURSE_SNO
 } ExoCourse;
 
 typedef struct ExoPilotStats {
