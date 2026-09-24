@@ -1,6 +1,7 @@
 #include "exo/platform.h"
 #include "exo/flight.h"
 #include "exo/tilemap.h"
+#include "exo/terrain.h"
 #include "texfloor.h"
 
 #include <3ds.h>
@@ -26,6 +27,7 @@
 #define COL_LEAF2  RGB32(22, 90, 38)
 #define COL_BLUE   RGB32(80, 200, 255)
 #define COL_RED    RGB32(255, 70, 70)
+#define COL_PURPLE RGB32(170, 40, 210)
 
 static const u32 TILE_COL[] = {
 	RGB32( 46, 110,  58),
@@ -50,6 +52,7 @@ static bool g_have_bg[3];
 static bool g_paused;
 static int g_menu = 1;
 static int g_pick = 0;
+static int g_pause_pick = 0;
 static float g_fps = 60.0f;
 
 static u32 tile_color(uint16_t id)
@@ -112,6 +115,8 @@ static void start_course(ExoCourse c)
 	else
 		exo_flight_load_map(&g_flight, EXO_COURSE_DEMO, NULL, 0);
 	load_tileset(c);
+	g_paused = 0;
+	g_pause_pick = 0;
 }
 
 static void load_gfx(void)
@@ -163,7 +168,7 @@ static void draw_poly(const float *s, const float *t, int n, u32 col)
 	int k;
 	if (n < 3) return;
 	for (k = 1; k < n - 1; ++k)
-		C2D_DrawTriangle(s[0], t[0], col, s[k], t[k], col, s[k + 1], t[k + 1], col, 0.3f);
+		C2D_DrawTriangle(s[0], t[0], col, s[k], t[k], col, s[k + 1], t[k + 1], col, 0.34f);
 }
 
 static int quad_sane(const float *sx, const float *sy, int n, float horizon)
@@ -266,6 +271,27 @@ static int cell_drawn(int cx, int cz)
 	return 0;
 }
 
+static void draw_goal_mark(const ExoFlight *f, float ox)
+{
+	static const float oxc[4] = { 0.0f, 1.0f, 1.0f, 0.0f };
+	static const float ozc[4] = { 0.0f, 0.0f, 1.0f, 1.0f };
+	float wx, wz, qx[4], qy[4];
+	int i, ok = 1;
+
+	if (!exo_flight_is_goal(f, f->goal_cx, f->goal_cz))
+		return;
+	wx = (float)f->goal_cx * EXO_FLIGHT_CELL;
+	wz = (float)f->goal_cz * EXO_FLIGHT_CELL;
+	for (i = 0; i < 4; ++i) {
+		if (!exo_flight_project3(f, wx + oxc[i] * EXO_FLIGHT_CELL, 0.4f,
+		                       wz + ozc[i] * EXO_FLIGHT_CELL, ox,
+		                       &qx[i], &qy[i]))
+			ok = 0;
+	}
+	if (ok && quad_sane(qx, qy, 4, f->horizon))
+		draw_poly(qx, qy, 4, COL_PURPLE);
+}
+
 static void draw_floor(ExoEye eye, ExoFlight *f)
 {
 	float ox, oy;
@@ -302,6 +328,7 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	}
 done:
 	exo_texfloor_end();
+	draw_goal_mark(f, ox);
 	f->tiles_drawn = drawn;
 	f->tiles_culled = culled;
 }
@@ -312,10 +339,12 @@ static void draw_trees(const ExoFlight *f)
 
 	for (i = 0; i < f->tree_n; ++i) {
 		float wx, wz, bx, by, tx, ty, tw;
-		if (!cell_drawn(f->trees[i].cx, f->trees[i].cz))
+		if (!cell_drawn(f->trees[i].cx, f->trees[i].cz) &&
+		    !cell_drawn(f->trees[i].cx + 1, f->trees[i].cz) &&
+		    !cell_drawn(f->trees[i].cx, f->trees[i].cz + 1))
 			continue;
-		wx = ((float)f->trees[i].cx + 0.5f) * EXO_FLIGHT_CELL;
-		wz = ((float)f->trees[i].cz + 0.5f) * EXO_FLIGHT_CELL;
+		wx = ((float)f->trees[i].cx + f->trees[i].ox) * EXO_FLIGHT_CELL;
+		wz = ((float)f->trees[i].cz + f->trees[i].oz) * EXO_FLIGHT_CELL;
 		if (!exo_flight_project3(f, wx, 0.0f, wz, 0.0f, &bx, &by))
 			continue;
 		if (by < f->horizon - 2.0f)
@@ -339,7 +368,7 @@ static void draw_trees(const ExoFlight *f)
 
 static int pilot_frame(const ExoFlight *f)
 {
-	if (f->y > 2.5f) return 3;
+	if (f->y > 2.5f || f->submerged) return 3;
 	if (f->mode == EXO_FLIGHT_HIGH) return 2;
 	if (f->speed > 2.5f) return 1;
 	return 0;
@@ -415,12 +444,12 @@ static void draw_top_overlay(const ExoFlight *f)
 	exo_top_text(360.0f, 220.0f, 0.42f, COL_TEXT, line);
 	if (f->course == EXO_COURSE_DP1)
 		snprintf(line, sizeof(line), "LAP %d/3", f->laps);
+	else if (f->course == EXO_COURSE_SS4)
+		snprintf(line, sizeof(line), "PAD %d/3", f->score);
 	else if (f->run == EXO_RUN_DONE)
 		snprintf(line, sizeof(line), "LAND %.2f", (double)f->run_t);
-	else if (f->run == EXO_RUN_GO)
-		snprintf(line, sizeof(line), "T %.2f", (double)f->run_t);
 	else
-		snprintf(line, sizeof(line), "GO");
+		snprintf(line, sizeof(line), "T %.2f", (double)f->run_t);
 	exo_top_text(200.0f, 220.0f, 0.42f, COL_TEXT, line);
 }
 
@@ -471,6 +500,8 @@ static void apply_tune(ExoFlight *f, const ExoInput *in)
 	float rend_t;
 	const float sx = 8.0f, sw = 196.0f;
 
+	if (g_paused)
+		return;
 	if (in && in->touch_press &&
 	    (float)in->touch_x >= sx && (float)in->touch_x <= sx + sw &&
 	    (float)in->touch_y >= 128.0f && (float)in->touch_y <= 148.0f)
@@ -482,10 +513,8 @@ static void apply_tune(ExoFlight *f, const ExoInput *in)
 		f->render_r = EXO_FLIGHT_RENDER_MIN +
 		              (int)(rend_t * (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN) + 0.5f);
 	}
-	if (exo_down(EXO_BTN_SELECT)) {
-		f->render_r = EXO_FLIGHT_RENDER;
+	if (exo_down(EXO_BTN_SELECT))
 		exo_flight_reset_run(f);
-	}
 }
 
 static void draw_menu(void)
@@ -496,9 +525,18 @@ static void draw_menu(void)
 	exo_text(8.0f, 24.0f, 0.28f, COL_TEXT, "SELECT COURSE");
 	exo_text(8.0f, 48.0f, 0.28f, g_pick == 0 ? COL_ACCENT : COL_DIM, "  SS4  SONIC CD");
 	exo_text(8.0f, 62.0f, 0.28f, g_pick == 1 ? COL_ACCENT : COL_DIM, "  DP1  DONUT PLAINS");
-	exo_text(8.0f, 90.0f, 0.28f, COL_DIM, "SS4  32PX  3 PURPLE");
-	exo_text(8.0f, 104.0f, 0.28f, COL_DIM, "DP1  8PX  3 LAPS");
+	exo_text(8.0f, 90.0f, 0.28f, COL_DIM, "SS4  3 PURPLE PADS");
+	exo_text(8.0f, 104.0f, 0.28f, COL_DIM, "DP1  3 LAPS TIME TRIAL");
 	exo_text(8.0f, 130.0f, 0.28f, COL_TEXT, "UP/DOWN  A START");
+}
+
+static void draw_pause(void)
+{
+	exo_bot_rect(40.0f, 40.0f, 240.0f, 120.0f, RGB32(16, 16, 28));
+	exo_text(52.0f, 50.0f, 0.34f, COL_ACCENT, "PAUSED");
+	exo_text(52.0f, 78.0f, 0.30f, g_pause_pick == 0 ? COL_ACCENT : COL_TEXT, "  RESUME");
+	exo_text(52.0f, 96.0f, 0.30f, g_pause_pick == 1 ? COL_ACCENT : COL_TEXT, "  COURSE SELECT");
+	exo_text(52.0f, 128.0f, 0.26f, COL_DIM, "UP/DOWN  A CONFIRM");
 }
 
 static void draw_hud(const ExoFlight *f)
@@ -510,6 +548,10 @@ static void draw_hud(const ExoFlight *f)
 	float bar;
 	float rend_t = (float)(f->render_r - EXO_FLIGHT_RENDER_MIN) /
 	               (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN);
+	int tx, ty;
+	uint16_t id = exo_tilemap_at(&f->map, f->cell_x, f->cell_z);
+
+	exo_terrain_xy(f->course, id, &tx, &ty);
 
 	exo_render_bottom(COL_BOT);
 	exo_text_begin();
@@ -522,8 +564,8 @@ static void draw_hud(const ExoFlight *f)
 	else
 		snprintf(line, sizeof(line), "SPD %4.0f %s", (double)hud, s->hud_unit);
 	exo_text(8.0f, 28.0f, 0.28f, COL_TEXT, line);
-	snprintf(line, sizeof(line), "REAL %.1f P %.2f", (double)f->speed, (double)f->pitch);
-	exo_text(8.0f, 40.0f, 0.28f, COL_DIM, line);
+	snprintf(line, sizeof(line), "ID [%d,%d] W %.1f", tx, ty, (double)f->water_t);
+	exo_text(8.0f, 40.0f, 0.28f, f->submerged ? COL_BLUE : COL_DIM, line);
 	snprintf(line, sizeof(line), "TILE %03d %03d TS %d PX %d",
 	         f->cell_x, f->cell_z, g_tile_n, g_tile_px);
 	exo_text(8.0f, 52.0f, 0.28f, COL_DIM, line);
@@ -544,7 +586,7 @@ static void draw_hud(const ExoFlight *f)
 	if (f->course == EXO_COURSE_DP1)
 		snprintf(line, sizeof(line), "LAP %d/3 T %.2f", f->laps, (double)f->run_t);
 	else if (f->course == EXO_COURSE_SS4)
-		snprintf(line, sizeof(line), "FIND PAD T %.2f", (double)f->run_t);
+		snprintf(line, sizeof(line), "PAD %d/3 T %.2f", f->score, (double)f->run_t);
 	else
 		snprintf(line, sizeof(line), "T %.2f BEST %.2f", (double)f->run_t, (double)f->best_t);
 	exo_text(8.0f, 98.0f, 0.28f, COL_ACCENT, line);
@@ -556,7 +598,7 @@ static void draw_hud(const ExoFlight *f)
 	         f->mode == EXO_FLIGHT_HIGH ? "Y SPEED A BRAKE B TOFF L/R STR" : "PAD LOOK L/R STR Y SPEED");
 	exo_text(8.0f, 212.0f, 0.28f, COL_DIM, "ZR CAM  SELECT RESET  START PAUSE");
 	if (g_paused)
-		exo_text(214.0f, 220.0f, 0.32f, COL_ACCENT, "PAUSED");
+		draw_pause();
 }
 
 static void draw_world(ExoEye eye)
@@ -592,14 +634,28 @@ int main(void)
 				g_menu = 0;
 			}
 		} else {
-			if (exo_down(EXO_BTN_START))
+			if (exo_down(EXO_BTN_START)) {
 				g_paused = !g_paused;
-			if (exo_down(EXO_BTN_X))
-				exo_flight_set_pilot(&g_flight,
-					g_flight.pilot == EXO_PILOT_SHIRAMMY ? EXO_PILOT_REXXI : EXO_PILOT_SHIRAMMY);
-			apply_tune(&g_flight, in);
-			if (!g_paused)
+				g_pause_pick = 0;
+			}
+			if (g_paused) {
+				if (exo_down(EXO_BTN_UP) || exo_down(EXO_BTN_DOWN))
+					g_pause_pick = 1 - g_pause_pick;
+				if (exo_down(EXO_BTN_A) || exo_down(EXO_BTN_B)) {
+					if (g_pause_pick == 1 && exo_down(EXO_BTN_A)) {
+						g_menu = 1;
+						g_paused = 0;
+					} else {
+						g_paused = 0;
+					}
+				}
+			} else {
+				if (exo_down(EXO_BTN_X))
+					exo_flight_set_pilot(&g_flight,
+						g_flight.pilot == EXO_PILOT_SHIRAMMY ? EXO_PILOT_REXXI : EXO_PILOT_SHIRAMMY);
+				apply_tune(&g_flight, in);
 				exo_flight_tick(&g_flight, in, dt);
+			}
 		}
 
 		exo_render_begin();
