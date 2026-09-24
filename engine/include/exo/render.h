@@ -19,6 +19,7 @@ void  exo_render_end(void);
 
 void  exo_render_bottom(uint32_t clear_rgba);
 void  exo_bot_rect(float x, float y, float w, float h, uint32_t rgba);
+void  exo_bot_line(float x0, float y0, float x1, float y1, uint32_t rgba);
 void  exo_text_begin(void);
 void  exo_text(float x, float y, float scale, uint32_t rgba, const char *s);
 void  exo_top_text(float x, float y, float scale, uint32_t rgba, const char *s);

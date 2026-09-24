@@ -26,16 +26,17 @@ typedef struct ExoInput {
 	float cstick_x;  /* New 3DS; 0 no 3DS velho */
 	float cstick_y;
 	float slider_3d; /* 0..1 */
-	float gyro_x;    /* gancho; 0 até habilitar */
+	float gyro_x;
 	float gyro_y;
 	float gyro_z;
 	uint32_t down;
 	uint32_t held;
 	uint32_t up;
 	bool new_3ds;
-    uint16_t touch_x;
+	uint16_t touch_x;
 	uint16_t touch_y;
 	uint8_t  touch_press;
+	uint8_t  touch_held;
 } ExoInput;
 
 const ExoInput *exo_input(void);
