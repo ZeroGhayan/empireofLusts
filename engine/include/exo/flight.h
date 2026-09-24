@@ -10,8 +10,9 @@
 #define EXO_FLIGHT_RENDER      16
 #define EXO_FLIGHT_HYST_ENTER  20.0f
 #define EXO_FLIGHT_HYST_LEAVE  10.0f
-#define EXO_FLIGHT_NEAR        8.0f
+#define EXO_FLIGHT_NEAR        6.0f
 #define EXO_FLIGHT_GRAV        90.0f
+#define EXO_FLIGHT_FOCAL       210.0f
 
 typedef enum ExoFlightMode {
 	EXO_FLIGHT_LOW = 0,
@@ -25,7 +26,7 @@ typedef enum ExoPilot {
 
 typedef struct ExoPilotStats {
 	float vmax;
-	float walk;          /* tecto LOW sem A */
+	float walk;
 	float accel;
 	float coast;
 	float turn_low;
@@ -63,5 +64,9 @@ void  exo_flight_eye_offset(const ExoFlight *f, float slider, int eye_sign,
 
 int   exo_flight_project(const ExoFlight *f, float wx, float wz,
                          float eye_x, float *sx, float *sy);
+
+/* Recorta o quad do tile no plano near e devolve 3..6 vértices de ecrã. */
+int   exo_flight_clip_quad(const ExoFlight *f, float wx, float wz, float cell,
+                           float eye_x, float sx[6], float sy[6], int *nv);
 
 #endif
