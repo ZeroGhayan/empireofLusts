@@ -38,7 +38,7 @@ float exo_flight_vmax(const ExoFlight *f)
 
 static ExoTerrain cell_ter(const ExoFlight *f, int cx, int cz)
 {
-	return exo_terrain_kind(f->course, exo_tilemap_at(&f->map, cx, cz));
+	return exo_terrain_kind(f->course, &f->map, exo_tilemap_at(&f->map, cx, cz));
 }
 
 static void add_tree_cell(ExoFlight *f, int cx, int cz, float ox, float oz, float h)
@@ -131,7 +131,7 @@ static void setup_dp1_bushes(ExoFlight *f)
 			uint16_t tr = exo_tilemap_at(&f->map, x + 1, z);
 			uint16_t bl = exo_tilemap_at(&f->map, x, z + 1);
 			uint16_t br = exo_tilemap_at(&f->map, x + 1, z + 1);
-			if (exo_terrain_is_bush_tl(f->course, tl, tr, bl, br))
+			if (exo_terrain_is_bush_tl(f->course, &f->map, tl, tr, bl, br))
 				add_tree_cell(f, x, z, 1.0f, 1.0f, 34.0f);
 		}
 	}
@@ -148,6 +148,7 @@ void exo_flight_reset_run(ExoFlight *f)
 	f->score = 0;
 	f->water_t = 0.0f;
 	f->submerged = 0;
+	f->bounce_cd = 0.0f;
 	f->x = mx * EXO_FLIGHT_CELL;
 	f->z = (mz - 8.0f) * EXO_FLIGHT_CELL;
 	f->y = 0.0f;
@@ -230,6 +231,8 @@ static bool blocked(const ExoFlight *f, float x, float z)
 
 	if (t == EXO_TER_WALL && f->y < EXO_FLIGHT_WALL_H)
 		return true;
+	if (t == EXO_TER_BUMPER && f->y < EXO_FLIGHT_BUMPER_H)
+		return true;
 	for (i = 0; i < f->tree_n; ++i) {
 		float tx = ((float)f->trees[i].cx + f->trees[i].ox) * EXO_FLIGHT_CELL;
 		float tz = ((float)f->trees[i].cz + f->trees[i].oz) * EXO_FLIGHT_CELL;
@@ -241,11 +244,39 @@ static bool blocked(const ExoFlight *f, float x, float z)
 	return false;
 }
 
-static int bumper_ahead(const ExoFlight *f, float x, float z)
+static int is_bumper(const ExoFlight *f, float x, float z)
 {
 	int cx = (int)floorf(x / EXO_FLIGHT_CELL);
 	int cz = (int)floorf(z / EXO_FLIGHT_CELL);
-	return cell_ter(f, cx, cz) == EXO_TER_BUMPER;
+	return cell_ter(f, cx, cz) == EXO_TER_BUMPER && f->y < EXO_FLIGHT_BUMPER_H;
+}
+
+static void bounce_off(ExoFlight *f, float hx, float hz)
+{
+	int cx = (int)floorf(hx / EXO_FLIGHT_CELL);
+	int cz = (int)floorf(hz / EXO_FLIGHT_CELL);
+	float bx = ((float)cx + 0.5f) * EXO_FLIGHT_CELL;
+	float bz = ((float)cz + 0.5f) * EXO_FLIGHT_CELL;
+	float dx = f->x - bx;
+	float dz = f->z - bz;
+	float mag = sqrtf(dx * dx + dz * dz);
+
+	if (f->bounce_cd > 0.0f)
+		return;
+	if (mag < 0.05f) {
+		dx = -sinf(f->yaw);
+		dz = -cosf(f->yaw);
+		mag = 1.0f;
+	}
+	dx /= mag;
+	dz /= mag;
+	f->x += dx * 16.0f;
+	f->z += dz * 16.0f;
+	f->yaw = atan2f(dx, dz);
+	if (f->speed < 48.0f)
+		f->speed = 48.0f;
+	f->cruise = f->speed;
+	f->bounce_cd = 0.28f;
 }
 
 static void clamp_map(ExoFlight *f)
@@ -289,6 +320,11 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		f->spring_cd -= dt;
 		if (f->spring_cd < 0.0f)
 			f->spring_cd = 0.0f;
+	}
+	if (f->bounce_cd > 0.0f) {
+		f->bounce_cd -= dt;
+		if (f->bounce_cd < 0.0f)
+			f->bounce_cd = 0.0f;
 	}
 
 	if (tap_zr)
@@ -419,17 +455,18 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		}
 	}
 
-	if (bumper_ahead(f, nx, f->z) || bumper_ahead(f, f->x, nz)) {
-		f->yaw += 3.14159265f;
-		f->speed *= 0.85f;
-		nx = f->x - sinf(f->yaw) * 10.0f;
-		nz = f->z - cosf(f->yaw) * 10.0f;
-	}
-	if (!blocked(f, nx, f->z))
+	if (is_bumper(f, nx, f->z)) {
+		bounce_off(f, nx, f->z);
+		nx = f->x;
+	} else if (!blocked(f, nx, f->z))
 		f->x = nx;
 	else
 		f->speed *= 0.5f;
-	if (!blocked(f, f->x, nz))
+
+	if (is_bumper(f, f->x, nz)) {
+		bounce_off(f, f->x, nz);
+		nz = f->z;
+	} else if (!blocked(f, f->x, nz))
 		f->z = nz;
 	else
 		f->speed *= 0.5f;
