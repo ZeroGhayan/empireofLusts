@@ -38,7 +38,7 @@ static C2D_SpriteSheet g_shi;
 static C2D_SpriteSheet g_rex;
 static bool g_have_bg[3];
 static bool g_paused;
-static int  g_tune; /* 0 = rexxi vmax, 1 = render r */
+static int  g_tune;
 static float g_fps = 60.0f;
 
 static u32 tile_color(uint16_t id)
@@ -129,25 +129,29 @@ static void draw_poly(const float *s, const float *t, int n, u32 col)
 
 static int quad_sane(const float *sx, const float *sy, int n, float horizon)
 {
-	int i, sky = 0;
+	int i, on = 0, sky = 0;
 	float minx =  9999.0f, maxx = -9999.0f;
 	float miny =  9999.0f, maxy = -9999.0f;
 
+	(void)horizon;
 	for (i = 0; i < n; ++i) {
-		if (sx[i] < -80.0f || sx[i] > 480.0f)
-			return 0;
-		if (sy[i] < -40.0f || sy[i] > 280.0f)
-			return 0;
 		if (sx[i] < minx) minx = sx[i];
 		if (sx[i] > maxx) maxx = sx[i];
 		if (sy[i] < miny) miny = sy[i];
 		if (sy[i] > maxy) maxy = sy[i];
-		if (sy[i] < horizon - 6.0f)
+		if (sx[i] > -60.0f && sx[i] < 460.0f &&
+		    sy[i] > -30.0f && sy[i] < 270.0f)
+			on++;
+		if (sy[i] < -80.0f)
 			sky++;
 	}
+	if (on == 0)
+		return 0;
 	if (sky == n)
 		return 0;
-	if ((maxx - minx) > 360.0f && (maxy - miny) > 160.0f)
+	if (maxx < -40.0f || minx > 440.0f)
+		return 0;
+	if (maxy < -20.0f || miny > 250.0f)
 		return 0;
 	return 1;
 }
@@ -187,8 +191,7 @@ static int emit_tile(ExoFlight *f, float ox, int tx, int tz,
 static void draw_floor(ExoEye eye, ExoFlight *f)
 {
 	float ox, oy;
-	int cx = f->cell_x;
-	int cz = f->cell_z;
+	int ccx, ccz;
 	int ring, dx, dz, drawn = 0, culled = 0;
 	int R = f->render_r;
 	int cap = f->draw_cap;
@@ -198,29 +201,27 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	if (R > EXO_FLIGHT_RENDER_MAX) R = EXO_FLIGHT_RENDER_MAX;
 	if (cap < 40) cap = 40;
 
-	far_z = (float)R * EXO_FLIGHT_CELL + f->cam_dist;
+	ccx = (int)floorf(f->cam_x / EXO_FLIGHT_CELL);
+	ccz = (int)floorf(f->cam_z / EXO_FLIGHT_CELL);
+	far_z = (float)R * EXO_FLIGHT_CELL + 8.0f;
 
 	exo_flight_eye_offset(f, exo_slider_3d(), (int)eye, &ox, &oy);
 	(void)oy;
 
-	/* longe → perto: tiles próximas cobrem as distantes */
-	for (ring = R; ring >= 0; --ring) {
-		int inner = ring == 0 ? 0 : ring;
-		for (dz = -inner; dz <= inner; ++dz) {
-			for (dx = -inner; dx <= inner; ++dx) {
-				int cheb = dx < 0 ? -dx : dx;
-				int czs = dz < 0 ? -dz : dz;
-				if (cheb < ring && czs < ring)
+	for (ring = 0; ring <= R; ++ring) {
+		for (dz = -ring; dz <= ring; ++dz) {
+			for (dx = -ring; dx <= ring; ++dx) {
+				int ax = dx < 0 ? -dx : dx;
+				int az = dz < 0 ? -dz : dz;
+				int cheb = ax > az ? ax : az;
+				if (cheb != ring)
 					continue;
-				if (cheb > ring || czs > ring)
-					continue;
-				if (!emit_tile(f, ox, cx + dx, cz + dz,
+				if (!emit_tile(f, ox, ccx + dx, ccz + dz,
 				               &drawn, &culled, cap, far_z))
 					goto done;
 			}
 		}
 	}
-
 done:
 	f->tiles_drawn = drawn;
 	f->tiles_culled = culled;
@@ -261,9 +262,9 @@ static void draw_pilot(const ExoFlight *f)
 		px = 200.0f;
 		py = 200.0f;
 	}
-	py -= f->y * 1.35f;
+	py -= f->y * 0.35f;
 	if (py > 236.0f) py = 236.0f;
-	if (py < 40.0f) py = 40.0f;
+	if (py < 28.0f) py = 28.0f;
 	C2D_DrawImageAt(img, px - iw * 0.5f, py - ih, 0.62f, NULL, 1.0f, 1.0f);
 }
 
@@ -285,7 +286,7 @@ static void draw_pad_graph(const ExoFlight *f)
 	const float cx = x0 + s * 0.5f, cy = y0 + s * 0.5f;
 	const float arm = 36.0f;
 	float pdx = f->pad_x * arm;
-	float pdy = -f->pad_y * arm; /* ecrã Y cresce para baixo */
+	float pdy = -f->pad_y * arm;
 	float hx = sinf(f->yaw) * arm;
 	float hz = -cosf(f->yaw) * arm;
 	float mx = f->wish_x * arm;
@@ -298,11 +299,8 @@ static void draw_pad_graph(const ExoFlight *f)
 	exo_bot_rect(x0 + s - 1.0f, y0, 1.0f, s, COL_DIM);
 	exo_bot_line(cx - arm, cy, cx + arm, cy, RGB32(50, 54, 70));
 	exo_bot_line(cx, cy - arm, cx, cy + arm, RGB32(50, 54, 70));
-	/* amarelo = yaw no mundo (+X direita, +Z cima no grafico → -Y ecrã) */
 	exo_bot_line(cx, cy, cx + hx, cy + hz, COL_HEAD);
-	/* verde = vetor de movimento aplicado */
 	exo_bot_line(cx, cy, cx + mx, cy + mz, COL_SLIDE);
-	/* ciano = circle pad cru */
 	exo_bot_line(cx, cy, cx + pdx, cy + pdy, COL_PAD);
 	exo_bot_rect(cx + pdx - 2.0f, cy + pdy - 2.0f, 5.0f, 5.0f, COL_PAD);
 	exo_text(x0, y0 + s + 2.0f, 0.35f, COL_PAD, "PAD");
@@ -392,6 +390,7 @@ static void draw_hud(const ExoFlight *f)
 	const ExoPilotStats *s = exo_pilot_stats(f->pilot);
 	char line[64];
 	float hud = exo_flight_hud_speed(f);
+	float hud_max = exo_flight_hud_max(f);
 	float bar;
 	float vmax = exo_flight_vmax(f);
 	float vmax_t = (f->rexxi_vmax - EXO_FLIGHT_REXXI_VMIN) /
@@ -406,16 +405,20 @@ static void draw_hud(const ExoFlight *f)
 	snprintf(line, sizeof(line), "%s  %s", s->name,
 	         f->mode == EXO_FLIGHT_HIGH ? "HIGH F-ZERO" : "LOW  3D");
 	exo_text(8.0f, 26.0f, 0.42f, COL_TEXT, line);
-	snprintf(line, sizeof(line), "SPD %3.0f %s", (double)hud, s->hud_unit);
+	if (f->pilot == EXO_PILOT_REXXI)
+		snprintf(line, sizeof(line), "SPD %4.2f %s", (double)hud, s->hud_unit);
+	else
+		snprintf(line, sizeof(line), "SPD %4.0f %s", (double)hud, s->hud_unit);
 	exo_text(8.0f, 44.0f, 0.42f, COL_TEXT, line);
 	snprintf(line, sizeof(line), "REAL %5.1f/%5.1f", (double)f->speed, (double)vmax);
 	exo_text(8.0f, 62.0f, 0.38f, COL_DIM, line);
 	snprintf(line, sizeof(line), "TILE %03d %03d", f->cell_x, f->cell_z);
 	exo_text(8.0f, 80.0f, 0.38f, COL_DIM, line);
-	snprintf(line, sizeof(line), "DRAW %d  CUT %d", f->tiles_drawn, f->tiles_culled);
+	snprintf(line, sizeof(line), "DRAW %d/%d CUT %d",
+	         f->tiles_drawn, f->draw_cap, f->tiles_culled);
 	exo_text(8.0f, 96.0f, 0.38f, COL_DIM, line);
 
-	bar = vmax > 0.0f ? f->speed / vmax : 0.0f;
+	bar = hud_max > 0.0f ? hud / hud_max : 0.0f;
 	if (bar < 0.0f) bar = 0.0f;
 	if (bar > 1.0f) bar = 1.0f;
 	exo_bot_rect(8.0f, 114.0f, 196.0f, 8.0f, RGB32(30, 30, 40));
@@ -432,7 +435,10 @@ static void draw_hud(const ExoFlight *f)
 
 	draw_pad_graph(f);
 
-	exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "A SPEED  B JUMP  X SISTER");
+	if (f->mode == EXO_FLIGHT_HIGH)
+		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "A SPEED  PAD PITCH  B POP");
+	else
+		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "A SPEED  B JUMP  X SISTER");
 	exo_text(8.0f, 214.0f, 0.32f, COL_DIM, "DPAD TUNE  TOUCH SLIDER");
 	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT RESET  START PAUSE");
 	if (g_paused)
