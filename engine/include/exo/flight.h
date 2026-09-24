@@ -26,8 +26,12 @@
 #define EXO_FLIGHT_SPRING_VY     110.0f
 #define EXO_FLIGHT_PIN_LOW       198.0f
 #define EXO_FLIGHT_PIN_FLY       160.0f
-#define EXO_FLIGHT_TREE_MAX      16
+#define EXO_FLIGHT_TREE_MAX      48
 #define EXO_FLIGHT_FAKE_MAX      3
+#define EXO_FLIGHT_WATER_DROWN   10.0f
+#define EXO_FLIGHT_WALL_H        28.0f
+#define EXO_FLIGHT_BOOST         55.0f
+#define EXO_FLIGHT_SS4_NEED      3
 
 typedef enum ExoFlightMode {
 	EXO_FLIGHT_LOW = 0,
@@ -72,6 +76,7 @@ typedef struct ExoPilotStats {
 
 typedef struct ExoTree {
 	int   cx, cz;
+	float ox, oz;
 	float h;
 } ExoTree;
 
@@ -111,10 +116,13 @@ typedef struct ExoFlight {
 	float best_t;
 	int    laps;
 	int    lap_chk;
+	int    score;
 	int    goal_cx, goal_cz;
 	int    fake_n;
 	int    fake_cx[EXO_FLIGHT_FAKE_MAX];
 	int    fake_cz[EXO_FLIGHT_FAKE_MAX];
+	float water_t;
+	int   submerged;
 } ExoFlight;
 
 const ExoPilotStats *exo_pilot_stats(ExoPilot p);
@@ -130,6 +138,7 @@ float exo_flight_hud_max(const ExoFlight *f);
 float exo_flight_speed_frac(const ExoFlight *f);
 void  exo_flight_eye_offset(const ExoFlight *f, float slider, int eye_sign,
                             float *ox, float *oy);
+int   exo_flight_is_goal(const ExoFlight *f, int cx, int cz);
 
 int   exo_flight_project(const ExoFlight *f, float wx, float wz,
                          float eye_x, float *sx, float *sy);
