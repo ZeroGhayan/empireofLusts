@@ -100,7 +100,7 @@ ifeq ($(strip $(ICON)),)
 		export APP_ICON := $(TOPDIR)/$(TARGET).png
 	else
 		ifneq (,$(findstring icon.png,$(icons)))
-			export APP_ICON := $(TOPDIR)/icon.png
+			export APP_ICON := $(TOPDIR)/$(TARGET)/icon.png
 		endif
 	endif
 else
@@ -115,20 +115,27 @@ ifneq ($(ROMFS),)
 	export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: all clean
+.PHONY: all pack clean
 
-#---------------------------------------------------------------------------------
+# python first, then a FRESH make so wildcard picks up ss4_tiles.t3s
 all:
 	@python3 $(CURDIR)/gfx/mk_p1.py
 	@python3 $(CURDIR)/gfx/mk_flight.py
-	@mkdir -p $(BUILD) $(GFXBUILD) $(CURDIR)/romfs/flight
+	@mkdir -p $(BUILD) $(GFXBUILD) $(CURDIR)/romfs/flight/ss4 $(CURDIR)/romfs/flight/dp1
+	@$(MAKE) --no-print-directory pack
+
+pack:
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+	@echo "---- tileset t3x ----"
+	@ls -l $(GFXBUILD)/ss4_tiles.t3x $(GFXBUILD)/dp1_tiles.t3x 2>/dev/null || echo "FALTA t3x: poe tiles.png em romfs/flight/ss4 e dp1 e volta a fazer make"
 
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf 3ds.3dsx 3ds.elf 3ds.smdh \
-		$(GFXBUILD) $(CURDIR)/gfx/p1_idle0.png $(CURDIR)/gfx/p1_idle1.png
+		$(GFXBUILD) $(CURDIR)/gfx/p1_idle0.png $(CURDIR)/gfx/p1_idle1.png \
+		$(CURDIR)/gfx/_ss4_tiles $(CURDIR)/gfx/_dp1_tiles \
+		$(CURDIR)/gfx/ss4_tiles.t3s $(CURDIR)/gfx/dp1_tiles.t3s
 
 #---------------------------------------------------------------------------------
 else
