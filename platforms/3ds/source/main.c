@@ -28,7 +28,7 @@ static const u32 TILE_COL[] = {
 	RGB32(210, 200,  70),
 	RGB32( 90,  86,  70),
 	RGB32( 40,  90, 140),
-	RGB32(160,  70,  50),
+	RGB32(220,  36,  36),
 	RGB32( 80, 160,  90)
 };
 
@@ -262,12 +262,11 @@ static void draw_pilot(const ExoFlight *f)
 
 	if (!exo_flight_project(f, f->x, f->z, 0.0f, &px, &py)) {
 		px = 200.0f;
-		py = 198.0f;
+		py = EXO_FLIGHT_PIN_Y;
 	}
 	if (py > 228.0f) py = 228.0f;
 	if (py < 36.0f) py = 36.0f;
 
-	/* pivo nos pes, depth acima do chao (0.3) e abaixo do HUD (0.5) */
 	par.pos.x = px;
 	par.pos.y = py;
 	par.pos.w = iw;
@@ -287,12 +286,11 @@ static void draw_speed_veil(const ExoFlight *f)
 	if (f->pilot != EXO_PILOT_SHIRAMMY)
 		return;
 	frac = exo_flight_speed_frac(f);
-	if (frac < 0.35f)
+	if (frac < 0.75f)
 		return;
-	a = (frac - 0.35f) / 0.65f;
+	a = (frac - 0.75f) / 0.25f;
 	if (a > 1.0f) a = 1.0f;
 	a = a * a;
-	/* alpha no byte alto; depth 0.46 = mundo escurece, HUD a 0.5 fica por cima */
 	col = ((u32)(130.0f * a) << 24);
 	C2D_DrawRectSolid(0.0f, 0.0f, 0.46f, 400.0f, 240.0f, col);
 	C2D_DrawRectSolid(0.0f, 0.0f, 0.465f, 400.0f, 22.0f + 28.0f * a, col);
@@ -451,10 +449,10 @@ static void draw_hud(const ExoFlight *f)
 
 	draw_pad_graph(f);
 
-	if (f->mode == EXO_FLIGHT_HIGH || f->flying)
-		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "Y SPEED  A BRAKE  B POP");
+	if (f->mode == EXO_FLIGHT_HIGH)
+		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "Y SPEED  A BRAKE  B TOFF");
 	else
-		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "A SPEED  B JUMP  X SISTER");
+		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "Y SPEED  B JUMP  X SISTER");
 	exo_text(8.0f, 214.0f, 0.32f, COL_DIM, "ZR CAM  DPAD R  TOUCH REF");
 	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT R18  START PAUSE");
 	if (g_paused)
