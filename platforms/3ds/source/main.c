@@ -241,7 +241,7 @@ static void draw_pilot(const ExoFlight *f)
 {
 	C2D_SpriteSheet sheet;
 	C2D_Image img;
-	C2D_Sprite spr;
+	C2D_DrawParams par;
 	float px, py, iw, ih;
 	int frame = pilot_frame(f);
 	size_t n;
@@ -255,8 +255,10 @@ static void draw_pilot(const ExoFlight *f)
 	if ((size_t)frame >= n)
 		frame = 0;
 	img = C2D_SpriteSheetGetImage(sheet, frame);
-	iw = img.subtex ? img.subtex->width : 32.0f;
-	ih = img.subtex ? img.subtex->height : 48.0f;
+	if (!img.subtex)
+		return;
+	iw = img.subtex->width;
+	ih = img.subtex->height;
 
 	if (!exo_flight_project(f, f->x, f->z, 0.0f, &px, &py)) {
 		px = 200.0f;
@@ -265,31 +267,36 @@ static void draw_pilot(const ExoFlight *f)
 	if (py > 228.0f) py = 228.0f;
 	if (py < 36.0f) py = 36.0f;
 
-	C2D_SpriteFromSheet(&spr, sheet, frame);
-	C2D_SpriteSetCenter(&spr, iw * 0.5f, ih);
-	C2D_SpriteSetPos(&spr, px, py);
-	if (f->cam_ref == EXO_CAM_SURFACE)
-		C2D_SpriteSetRotation(&spr, f->bank);
-	else
-		C2D_SpriteSetRotation(&spr, 0.0f);
-	C2D_DrawSprite(&spr);
+	/* pivo nos pes, depth acima do chao (0.3) e abaixo do HUD (0.5) */
+	par.pos.x = px;
+	par.pos.y = py;
+	par.pos.w = iw;
+	par.pos.h = ih;
+	par.center.x = iw * 0.5f;
+	par.center.y = ih;
+	par.depth = 0.44f;
+	par.angle = (f->cam_ref == EXO_CAM_SURFACE) ? f->bank : 0.0f;
+	C2D_DrawImage(img, &par, NULL);
 }
 
 static void draw_speed_veil(const ExoFlight *f)
 {
-	float frac = exo_flight_speed_frac(f);
-	float a;
+	float frac, a;
 	u32 col;
 
+	if (f->pilot != EXO_PILOT_SHIRAMMY)
+		return;
+	frac = exo_flight_speed_frac(f);
 	if (frac < 0.35f)
 		return;
 	a = (frac - 0.35f) / 0.65f;
 	if (a > 1.0f) a = 1.0f;
 	a = a * a;
-	col = ((u32)(150.0f * a) << 24);
-	C2D_DrawRectSolid(0.0f, 0.0f, 0.85f, 400.0f, 240.0f, col);
-	C2D_DrawRectSolid(0.0f, 0.0f, 0.86f, 400.0f, 28.0f + 36.0f * a, col);
-	C2D_DrawRectSolid(0.0f, 212.0f - 20.0f * a, 0.86f, 400.0f, 28.0f + 20.0f * a, col);
+	/* alpha no byte alto; depth 0.46 = mundo escurece, HUD a 0.5 fica por cima */
+	col = ((u32)(130.0f * a) << 24);
+	C2D_DrawRectSolid(0.0f, 0.0f, 0.46f, 400.0f, 240.0f, col);
+	C2D_DrawRectSolid(0.0f, 0.0f, 0.465f, 400.0f, 22.0f + 28.0f * a, col);
+	C2D_DrawRectSolid(0.0f, 218.0f - 16.0f * a, 0.465f, 400.0f, 22.0f + 16.0f * a, col);
 }
 
 static void draw_charge_bar(const ExoFlight *f)
@@ -297,9 +304,9 @@ static void draw_charge_bar(const ExoFlight *f)
 	float w = 72.0f * f->charge;
 	u32 fill = (f->mode == EXO_FLIGHT_HIGH) ? RGB32(255, 90, 70) : RGB32(80, 200, 255);
 
-	C2D_DrawRectSolid(8.0f, 224.0f, 0.88f, 74.0f, 8.0f, RGB32(20, 22, 32));
+	C2D_DrawRectSolid(8.0f, 224.0f, 0.62f, 74.0f, 8.0f, RGB32(20, 22, 32));
 	if (w > 0.5f)
-		C2D_DrawRectSolid(9.0f, 225.0f, 0.89f, w, 6.0f, fill);
+		C2D_DrawRectSolid(9.0f, 225.0f, 0.63f, w, 6.0f, fill);
 }
 
 static void draw_top_overlay(const ExoFlight *f)
