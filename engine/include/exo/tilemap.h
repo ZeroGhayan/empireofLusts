@@ -7,6 +7,8 @@
 #define EXO_TILEMAP_MAX  128
 #define EXO_TILE_PX      32
 #define EXO_TILE_MAX     1024
+#define EXO_TILE_WALL    1
+#define EXO_TILE_SPRING  6
 
 typedef struct ExoTilemap {
 	uint16_t w;
@@ -19,11 +21,12 @@ typedef struct ExoTilemap {
 
 void     exo_tilemap_clear(ExoTilemap *m);
 void     exo_tilemap_demo(ExoTilemap *m);
+void     exo_tilemap_place_springs(ExoTilemap *m);
 bool     exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size);
 uint16_t exo_tilemap_at(const ExoTilemap *m, int x, int y);
 bool     exo_tilemap_solid(const ExoTilemap *m, int x, int y);
+bool     exo_tilemap_spring(const ExoTilemap *m, int x, int y);
 
-/* Empacota índice da tile em RGB para o map.png de autoria. */
 void     exo_tile_index_rgb(uint16_t idx, uint8_t *r, uint8_t *g, uint8_t *b);
 uint16_t exo_tile_rgb_index(uint8_t r, uint8_t g, uint8_t b);
 

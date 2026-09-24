@@ -10,8 +10,6 @@
 #define EXO_FLIGHT_RENDER        18
 #define EXO_FLIGHT_RENDER_MIN    4
 #define EXO_FLIGHT_RENDER_MAX    20
-#define EXO_FLIGHT_HYST_ENTER    20.0f
-#define EXO_FLIGHT_HYST_LEAVE    10.0f
 #define EXO_FLIGHT_NEAR          6.0f
 #define EXO_FLIGHT_GRAV          90.0f
 #define EXO_FLIGHT_FOCAL         210.0f
@@ -19,8 +17,11 @@
 #define EXO_FLIGHT_Y_MAX         180.0f
 #define EXO_FLIGHT_HUD_SHI       1062.0f
 #define EXO_FLIGHT_HUD_REX       2.5f
-#define EXO_FLIGHT_CHARGE_SEC    0.80f
+#define EXO_FLIGHT_CHARGE_SEC    1.60f
+#define EXO_FLIGHT_CHARGE_DECAY  9.00f
 #define EXO_FLIGHT_BANK_MAX      0.42f
+#define EXO_FLIGHT_SPRING_VY     110.0f
+#define EXO_FLIGHT_PIN_Y         160.0f
 
 typedef enum ExoFlightMode {
 	EXO_FLIGHT_LOW = 0,
@@ -66,6 +67,7 @@ typedef struct ExoFlight {
 	float focal;
 	float bank;
 	float charge;
+	int   charge_armed;
 	int   grounded;
 	int   flying;
 	int   cell_x, cell_z;
@@ -73,6 +75,7 @@ typedef struct ExoFlight {
 	int   tiles_culled;
 	int   render_r;
 	int   draw_cap;
+	float spring_cd;
 	float pad_x, pad_y;
 	float move_x, move_z;
 	float wish_x, wish_z;
