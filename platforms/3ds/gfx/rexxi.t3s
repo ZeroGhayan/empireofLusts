@@ -1,0 +1,5 @@
+--atlas -f rgba8888 -z auto
+rexxi_idle.png
+rexxi_low.png
+rexxi_high.png
+rexxi_flight.png

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Gera placeholders de voo (3 camadas de fundo + 2 poses do piloto).
-
-Nao sobrescreve PNGs que ja existam — podes deixar recortes do Sonic CD.
-"""
+"""Gera fundos placeholder e desempacota sprites das irmas (pilots.json)."""
+import base64
+import json
 import os
 import struct
 import zlib
@@ -32,7 +31,7 @@ def rect(p, w, h, x, y, rw, rh, c):
         for xx in range(x, x + rw):
             if 0 <= xx < w and 0 <= yy < h:
                 i = (yy * w + xx) * 4
-                p[i : i + 4] = bytes((r, g, b, a))
+                p[i:i + 4] = bytes((r, g, b, a))
 
 
 def write_if_absent(path, w, h, pixels):
@@ -66,47 +65,45 @@ def layer2():
     return w, h, p
 
 
-def pilot_low():
-    w, h = 32, 32
-    p = fill(w, h, (0, 0, 0, 0))
-    rect(p, w, h, 10, 14, 12, 16, (30, 90, 160, 255))
-    rect(p, w, h, 12, 16, 8, 12, (70, 180, 255, 255))
-    rect(p, w, h, 12, 6, 8, 10, (240, 200, 160, 255))
-    rect(p, w, h, 12, 6, 8, 3, (20, 40, 80, 255))
-    return w, h, p
-
-
-def pilot_high():
-    w, h = 32, 32
-    p = fill(w, h, (0, 0, 0, 0))
-    rect(p, w, h, 6, 14, 20, 10, (180, 40, 40, 255))
-    rect(p, w, h, 10, 10, 12, 8, (240, 80, 70, 255))
-    rect(p, w, h, 14, 8, 4, 6, (255, 220, 80, 255))
-    return w, h, p
-
-
-def t3s(name, frames):
+def t3s(name, frames, fmt="rgba5551"):
     path = os.path.join(DIR, name)
     with open(path, "w") as f:
-        f.write("--atlas -f rgba5551 -z auto\n")
+        f.write("--atlas -f %s -z auto\n" % fmt)
         for fr in frames:
             f.write(fr + "\n")
 
 
+def unpack_pilots():
+    pack = os.path.join(DIR, "pilots.json")
+    with open(pack, "r") as f:
+        data = json.load(f)
+    for rel, b64 in data.items():
+        who, fn = rel.split("/")
+        key = who.lower() + "_" + fn
+        out = os.path.join(DIR, key)
+        with open(out, "wb") as g:
+            g.write(base64.b64decode(b64))
+
+
 def main():
-    specs = [
+    for name, w, h, pix in (
         ("bg0.png",) + layer0(),
         ("bg1.png",) + layer1(),
         ("bg2.png",) + layer2(),
-        ("pilot_low.png",) + pilot_low(),
-        ("pilot_high.png",) + pilot_high(),
-    ]
-    for name, w, h, pix in specs:
+    ):
         write_if_absent(os.path.join(DIR, name), w, h, pix)
+    unpack_pilots()
     t3s("bg0.t3s", ["bg0.png"])
     t3s("bg1.t3s", ["bg1.png"])
     t3s("bg2.t3s", ["bg2.png"])
-    t3s("pilot.t3s", ["pilot_low.png", "pilot_high.png"])
+    t3s("shirammy.t3s", [
+        "shirammy_idle.png", "shirammy_low.png",
+        "shirammy_high.png", "shirammy_flight.png",
+    ], "rgba8888")
+    t3s("rexxi.t3s", [
+        "rexxi_idle.png", "rexxi_low.png",
+        "rexxi_high.png", "rexxi_flight.png",
+    ], "rgba8888")
 
 
 if __name__ == "__main__":

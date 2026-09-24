@@ -1,0 +1,5 @@
+--atlas -f rgba8888 -z auto
+shirammy_idle.png
+shirammy_low.png
+shirammy_high.png
+shirammy_flight.png
