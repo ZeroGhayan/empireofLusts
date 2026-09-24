@@ -22,8 +22,7 @@ typedef enum ExoTerrain {
 } ExoTerrain;
 
 int        exo_terrain_cols(ExoCourse course, const ExoTilemap *m);
-void       exo_terrain_xy(ExoCourse course, const ExoTilemap *m, uint16_t id,
-                          int *tx, int *ty);
+void       exo_terrain_xy(ExoCourse course, uint16_t id, int *tx, int *ty);
 ExoTerrain exo_terrain_kind(ExoCourse course, const ExoTilemap *m, uint16_t id);
 int        exo_terrain_is_bush_tl(ExoCourse course, const ExoTilemap *m,
                                  uint16_t tl, uint16_t tr,
