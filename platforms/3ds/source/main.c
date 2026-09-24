@@ -23,6 +23,8 @@
 #define COL_TRUNK  RGB32(92, 58, 28)
 #define COL_LEAF   RGB32(36, 130, 52)
 #define COL_LEAF2  RGB32(22, 90, 38)
+#define COL_BLUE   RGB32(80, 200, 255)
+#define COL_RED    RGB32(255, 70, 70)
 
 static const u32 TILE_COL[] = {
 	RGB32( 46, 110,  58),
@@ -41,6 +43,8 @@ static C2D_SpriteSheet g_shi;
 static C2D_SpriteSheet g_rex;
 static bool g_have_bg[3];
 static bool g_paused;
+static int g_menu = 1;
+static int g_pick = 0;
 static float g_fps = 60.0f;
 
 static u32 tile_color(uint16_t id)
@@ -49,31 +53,43 @@ static u32 tile_color(uint16_t id)
 	return TILE_COL[id % n];
 }
 
-static void try_load_etm(void)
+static int load_etm_file(const char *path, ExoCourse course)
 {
 	FILE *fp;
 	uint8_t *buf;
 	long sz;
+	int ok = 0;
 
-	fp = fopen("romfs:/flight/map.etm", "rb");
+	fp = fopen(path, "rb");
 	if (!fp)
-		return;
+		return exo_flight_load_map(&g_flight, course, NULL, 0), 0;
 	fseek(fp, 0, SEEK_END);
 	sz = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 	if (sz <= 16 || sz > 128 * 128 * 2 + 64) {
 		fclose(fp);
-		return;
+		return exo_flight_load_map(&g_flight, course, NULL, 0), 0;
 	}
 	buf = (uint8_t *)malloc((size_t)sz);
 	if (!buf) {
 		fclose(fp);
-		return;
+		return 0;
 	}
 	if (fread(buf, 1, (size_t)sz, fp) == (size_t)sz)
-		exo_tilemap_load(&g_flight.map, buf, (uint32_t)sz);
+		ok = exo_flight_load_map(&g_flight, course, buf, (uint32_t)sz);
 	free(buf);
 	fclose(fp);
+	return ok;
+}
+
+static void start_course(ExoCourse c)
+{
+	if (c == EXO_COURSE_SS4)
+		load_etm_file("romfs:/flight/ss4/map.etm", EXO_COURSE_SS4);
+	else if (c == EXO_COURSE_DP1)
+		load_etm_file("romfs:/flight/dp1/map.etm", EXO_COURSE_DP1);
+	else
+		exo_flight_load_map(&g_flight, EXO_COURSE_DEMO, NULL, 0);
 }
 
 static void load_gfx(void)
@@ -147,14 +163,10 @@ static int quad_sane(const float *sx, const float *sy, int n, float horizon)
 		if (sy[i] < -80.0f)
 			sky++;
 	}
-	if (on == 0)
-		return 0;
-	if (sky == n)
-		return 0;
-	if (maxx < -40.0f || minx > 440.0f)
-		return 0;
-	if (maxy < -20.0f || miny > 250.0f)
-		return 0;
+	if (on == 0) return 0;
+	if (sky == n) return 0;
+	if (maxx < -40.0f || minx > 440.0f) return 0;
+	if (maxy < -20.0f || miny > 250.0f) return 0;
 	return 1;
 }
 
@@ -193,8 +205,7 @@ static int emit_tile(ExoFlight *f, float ox, int tx, int tz,
 static void draw_floor(ExoEye eye, ExoFlight *f)
 {
 	float ox, oy;
-	int ccx, ccz;
-	int ring, dx, dz, drawn = 0, culled = 0;
+	int ccx, ccz, ring, dx, dz, drawn = 0, culled = 0;
 	int R = f->render_r;
 	int cap = f->draw_cap;
 	float far_z;
@@ -206,7 +217,6 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	ccx = (int)floorf(f->cam_x / EXO_FLIGHT_CELL);
 	ccz = (int)floorf(f->cam_z / EXO_FLIGHT_CELL);
 	far_z = (float)R * EXO_FLIGHT_CELL + 8.0f;
-
 	exo_flight_eye_offset(f, exo_slider_3d(), (int)eye, &ox, &oy);
 	(void)oy;
 
@@ -231,51 +241,40 @@ done:
 
 static void draw_trees(const ExoFlight *f)
 {
-	int i, pass;
+	int i;
 
-	/* far-to-near aproximado: duas passagens por distancia bruta */
-	for (pass = 1; pass >= 0; --pass) {
-		for (i = 0; i < f->tree_n; ++i) {
-			float bx, by, tx, ty, tw;
-			float dx = f->trees[i].x - f->cam_x;
-			float dz = f->trees[i].z - f->cam_z;
-			float d2 = dx * dx + dz * dz;
-			int far = d2 > (90.0f * 90.0f);
-			if (far != pass)
-				continue;
-			if (!exo_flight_project3(f, f->trees[i].x, 0.0f, f->trees[i].z,
-			                         0.0f, &bx, &by))
-				continue;
-			if (!exo_flight_project3(f, f->trees[i].x, f->trees[i].h,
-			                         f->trees[i].z, 0.0f, &tx, &ty))
-				continue;
-			if (by < ty) {
-				float tmp = by; by = ty; ty = tmp;
-			}
-			tw = (by - ty) * 0.28f;
-			if (tw < 3.0f) tw = 3.0f;
-			if (bx < -40.0f || bx > 440.0f || by < -20.0f || ty > 250.0f)
-				continue;
-			C2D_DrawRectSolid(bx - tw * 0.18f, ty + (by - ty) * 0.45f, 0.38f,
-			                  tw * 0.36f, (by - ty) * 0.55f, COL_TRUNK);
-			C2D_DrawTriangle(bx, ty, COL_LEAF,
-			                 bx - tw, ty + (by - ty) * 0.62f, COL_LEAF2,
-			                 bx + tw, ty + (by - ty) * 0.62f, COL_LEAF, 0.39f);
-			C2D_DrawTriangle(bx, ty + (by - ty) * 0.18f, COL_LEAF2,
-			                 bx - tw * 0.75f, ty + (by - ty) * 0.58f, COL_LEAF,
-			                 bx + tw * 0.75f, ty + (by - ty) * 0.58f, COL_LEAF, 0.40f);
+	for (i = 0; i < f->tree_n; ++i) {
+		float wx = ((float)f->trees[i].cx + 0.5f) * EXO_FLIGHT_CELL;
+		float wz = ((float)f->trees[i].cz + 0.5f) * EXO_FLIGHT_CELL;
+		float bx, by, tx, ty, tw;
+
+		if (!exo_flight_project3(f, wx, 0.0f, wz, 0.0f, &bx, &by))
+			continue;
+		/* base tem de assentar no chao, nao no ceu */
+		if (by < f->horizon - 2.0f)
+			continue;
+		if (!exo_flight_project3(f, wx, f->trees[i].h, wz, 0.0f, &tx, &ty))
+			continue;
+		if (by < ty) {
+			float tmp = by; by = ty; ty = tmp;
 		}
+		tw = (by - ty) * 0.28f;
+		if (tw < 3.0f) tw = 3.0f;
+		if (bx < -40.0f || bx > 440.0f || by < -20.0f || ty > 250.0f)
+			continue;
+		C2D_DrawRectSolid(bx - tw * 0.18f, ty + (by - ty) * 0.45f, 0.38f,
+		                  tw * 0.36f, (by - ty) * 0.55f, COL_TRUNK);
+		C2D_DrawTriangle(bx, ty, COL_LEAF,
+		                 bx - tw, ty + (by - ty) * 0.62f, COL_LEAF2,
+		                 bx + tw, ty + (by - ty) * 0.62f, COL_LEAF, 0.39f);
 	}
 }
 
 static int pilot_frame(const ExoFlight *f)
 {
-	if (f->y > 2.5f)
-		return 3;
-	if (f->mode == EXO_FLIGHT_HIGH)
-		return 2;
-	if (f->speed > 2.5f)
-		return 1;
+	if (f->y > 2.5f) return 3;
+	if (f->mode == EXO_FLIGHT_HIGH) return 2;
+	if (f->speed > 2.5f) return 1;
 	return 0;
 }
 
@@ -289,16 +288,12 @@ static void draw_pilot(const ExoFlight *f)
 	size_t n;
 
 	sheet = (f->pilot == EXO_PILOT_REXXI) ? g_rex : g_shi;
-	if (!sheet)
-		return;
+	if (!sheet) return;
 	n = C2D_SpriteSheetCount(sheet);
-	if (n == 0)
-		return;
-	if ((size_t)frame >= n)
-		frame = 0;
+	if (n == 0) return;
+	if ((size_t)frame >= n) frame = 0;
 	img = C2D_SpriteSheetGetImage(sheet, frame);
-	if (!img.subtex)
-		return;
+	if (!img.subtex) return;
 	iw = img.subtex->width;
 	ih = img.subtex->height;
 
@@ -309,14 +304,10 @@ static void draw_pilot(const ExoFlight *f)
 	if (py > 228.0f) py = 228.0f;
 	if (py < 36.0f) py = 36.0f;
 
-	par.pos.x = px;
-	par.pos.y = py;
-	par.pos.w = iw;
-	par.pos.h = ih;
-	par.center.x = iw * 0.5f;
-	par.center.y = ih;
+	par.pos.x = px; par.pos.y = py; par.pos.w = iw; par.pos.h = ih;
+	par.center.x = iw * 0.5f; par.center.y = ih;
 	par.depth = 0.44f;
-	par.angle = (f->cam_ref == EXO_CAM_SURFACE) ? f->bank : 0.0f;
+	par.angle = (f->cam_ref == EXO_CAM_SURFACE) ? (f->bank + f->pitch * 0.35f) : 0.0f;
 	C2D_DrawImage(img, &par, NULL);
 }
 
@@ -325,24 +316,20 @@ static void draw_speed_veil(const ExoFlight *f)
 	float frac, a;
 	u32 col;
 
-	if (f->pilot != EXO_PILOT_SHIRAMMY)
-		return;
+	if (f->pilot != EXO_PILOT_SHIRAMMY) return;
 	frac = exo_flight_speed_frac(f);
-	if (frac < 0.75f)
-		return;
+	if (frac < 0.75f) return;
 	a = (frac - 0.75f) / 0.25f;
 	if (a > 1.0f) a = 1.0f;
 	a = a * a;
 	col = ((u32)(130.0f * a) << 24);
 	C2D_DrawRectSolid(0.0f, 0.0f, 0.46f, 400.0f, 240.0f, col);
-	C2D_DrawRectSolid(0.0f, 0.0f, 0.465f, 400.0f, 22.0f + 28.0f * a, col);
-	C2D_DrawRectSolid(0.0f, 218.0f - 16.0f * a, 0.465f, 400.0f, 22.0f + 16.0f * a, col);
 }
 
 static void draw_charge_bar(const ExoFlight *f)
 {
 	float w = 72.0f * f->charge;
-	u32 fill = (f->charge > 0.02f) ? RGB32(80, 200, 255) : RGB32(40, 44, 58);
+	u32 fill = f->charge_armed ? COL_RED : COL_BLUE;
 
 	C2D_DrawRectSolid(8.0f, 224.0f, 0.62f, 74.0f, 8.0f, RGB32(20, 22, 32));
 	if (w > 0.5f)
@@ -359,14 +346,15 @@ static void draw_top_overlay(const ExoFlight *f)
 	exo_top_text(360.0f, 8.0f, 0.42f, COL_ACCENT, line);
 	snprintf(line, sizeof(line), "H %.1f", (double)f->y);
 	exo_top_text(360.0f, 220.0f, 0.42f, COL_TEXT, line);
-	if (f->run == EXO_RUN_DONE)
+	if (f->course == EXO_COURSE_DP1)
+		snprintf(line, sizeof(line), "LAP %d/3", f->laps);
+	else if (f->run == EXO_RUN_DONE)
 		snprintf(line, sizeof(line), "LAND %.2f", (double)f->run_t);
 	else if (f->run == EXO_RUN_GO)
 		snprintf(line, sizeof(line), "T %.2f", (double)f->run_t);
 	else
-		snprintf(line, sizeof(line), "GO PAD");
-	exo_top_text(200.0f, 220.0f, 0.42f,
-	             f->run == EXO_RUN_DONE ? COL_ACCENT : COL_TEXT, line);
+		snprintf(line, sizeof(line), "GO");
+	exo_top_text(200.0f, 220.0f, 0.42f, COL_TEXT, line);
 }
 
 static void draw_pad_graph(const ExoFlight *f)
@@ -382,16 +370,11 @@ static void draw_pad_graph(const ExoFlight *f)
 	float mz = -f->wish_z * arm;
 
 	exo_bot_rect(x0, y0, s, s, RGB32(22, 24, 34));
-	exo_bot_rect(x0, y0, s, 1.0f, COL_DIM);
-	exo_bot_rect(x0, y0 + s - 1.0f, s, 1.0f, COL_DIM);
-	exo_bot_rect(x0, y0, 1.0f, s, COL_DIM);
-	exo_bot_rect(x0 + s - 1.0f, y0, 1.0f, s, COL_DIM);
 	exo_bot_line(cx - arm, cy, cx + arm, cy, RGB32(50, 54, 70));
 	exo_bot_line(cx, cy - arm, cx, cy + arm, RGB32(50, 54, 70));
 	exo_bot_line(cx, cy, cx + hx, cy + hz, COL_HEAD);
 	exo_bot_line(cx, cy, cx + mx, cy + mz, COL_SLIDE);
 	exo_bot_line(cx, cy, cx + pdx, cy + pdy, COL_PAD);
-	exo_bot_rect(cx + pdx - 2.0f, cy + pdy - 2.0f, 5.0f, 5.0f, COL_PAD);
 	exo_text(x0, y0 + s + 2.0f, 0.35f, COL_PAD, "PAD");
 	exo_text(x0 + 28.0f, y0 + s + 2.0f, 0.35f, COL_HEAD, "YAW");
 	exo_text(x0 + 56.0f, y0 + s + 2.0f, 0.35f, COL_SLIDE, "MOV");
@@ -402,19 +385,16 @@ static void draw_slider(const char *label, float t, int selected,
 {
 	u32 bar = selected ? COL_ACCENT : RGB32(40, 44, 58);
 	u32 fill = selected ? COL_SLIDE : RGB32(80, 100, 130);
-
 	if (t < 0.0f) t = 0.0f;
 	if (t > 1.0f) t = 1.0f;
 	exo_text(x, y, 0.38f, selected ? COL_ACCENT : COL_DIM, label);
 	exo_bot_rect(x, y + 12.0f, w, 8.0f, bar);
 	exo_bot_rect(x, y + 12.0f, w * t, 8.0f, fill);
-	exo_bot_rect(x + w * t - 2.0f, y + 10.0f, 4.0f, 12.0f, COL_TEXT);
 }
 
 static int touch_in(const ExoInput *in, float x, float y, float w, float h)
 {
-	if (!in || !in->touch_held)
-		return 0;
+	if (!in || !in->touch_held) return 0;
 	return (float)in->touch_x >= x && (float)in->touch_x <= x + w &&
 	       (float)in->touch_y >= y && (float)in->touch_y <= y + h;
 }
@@ -423,34 +403,36 @@ static void apply_tune(ExoFlight *f, const ExoInput *in)
 {
 	float rend_t;
 	const float sx = 8.0f, sw = 196.0f;
-	const float y1 = 168.0f;
 
 	if (in && in->touch_press &&
 	    (float)in->touch_x >= sx && (float)in->touch_x <= sx + sw &&
-	    (float)in->touch_y >= 132.0f && (float)in->touch_y <= 160.0f) {
+	    (float)in->touch_y >= 128.0f && (float)in->touch_y <= 148.0f)
 		f->cam_ref = (f->cam_ref == EXO_CAM_SURFACE) ? EXO_CAM_PILOT : EXO_CAM_SURFACE;
-	}
-	if (touch_in(in, sx, y1, sw, 28.0f)) {
+	if (touch_in(in, sx, 168.0f, sw, 28.0f)) {
 		rend_t = ((float)in->touch_x - sx) / sw;
 		if (rend_t < 0.0f) rend_t = 0.0f;
 		if (rend_t > 1.0f) rend_t = 1.0f;
 		f->render_r = EXO_FLIGHT_RENDER_MIN +
 		              (int)(rend_t * (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN) + 0.5f);
 	}
-
-	if (exo_down(EXO_BTN_LEFT) || exo_down(EXO_BTN_RIGHT)) {
-		int dir = exo_down(EXO_BTN_RIGHT) ? 1 : -1;
-		f->render_r += dir;
-		if (f->render_r < EXO_FLIGHT_RENDER_MIN)
-			f->render_r = EXO_FLIGHT_RENDER_MIN;
-		if (f->render_r > EXO_FLIGHT_RENDER_MAX)
-			f->render_r = EXO_FLIGHT_RENDER_MAX;
-	}
-
 	if (exo_down(EXO_BTN_SELECT)) {
 		f->render_r = EXO_FLIGHT_RENDER;
 		exo_flight_reset_run(f);
 	}
+}
+
+static void draw_menu(void)
+{
+	exo_render_bottom(COL_BOT);
+	exo_text_begin();
+	exo_text(8.0f, 12.0f, 0.52f, COL_ACCENT, "EMPIRE OF LUSTS");
+	exo_text(8.0f, 36.0f, 0.40f, COL_TEXT, "SELECT COURSE");
+	exo_text(8.0f, 70.0f, 0.42f, g_pick == 0 ? COL_ACCENT : COL_DIM, "  SS4  SONIC CD");
+	exo_text(8.0f, 92.0f, 0.42f, g_pick == 1 ? COL_ACCENT : COL_DIM, "  DP1  DONUT PLAINS");
+	exo_text(8.0f, 130.0f, 0.36f, COL_DIM, "SS4  3 PURPLE  1 REAL");
+	exo_text(8.0f, 148.0f, 0.36f, COL_DIM, "DP1  3 LAPS");
+	exo_text(8.0f, 180.0f, 0.36f, COL_TEXT, "UP/DOWN  A START");
+	exo_text(8.0f, 198.0f, 0.36f, COL_DIM, "COPY maps to romfs/flight/");
 }
 
 static void draw_hud(const ExoFlight *f)
@@ -459,15 +441,13 @@ static void draw_hud(const ExoFlight *f)
 	char line[64];
 	float hud = exo_flight_hud_speed(f);
 	float hud_max = exo_flight_hud_max(f);
-	float bar;
-	float vmax = exo_flight_vmax(f);
+	float bar, vmax = exo_flight_vmax(f);
 	float rend_t = (float)(f->render_r - EXO_FLIGHT_RENDER_MIN) /
 	               (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN);
 
 	exo_render_bottom(COL_BOT);
 	exo_text_begin();
-	snprintf(line, sizeof(line), "EMPIRE OF LUSTS");
-	exo_text(8.0f, 8.0f, 0.48f, COL_ACCENT, line);
+	exo_text(8.0f, 8.0f, 0.48f, COL_ACCENT, "EMPIRE OF LUSTS");
 	snprintf(line, sizeof(line), "%s  %s", s->name,
 	         f->mode == EXO_FLIGHT_HIGH ? "HIGH F-ZERO" : "LOW  3D");
 	exo_text(8.0f, 26.0f, 0.42f, COL_TEXT, line);
@@ -476,12 +456,11 @@ static void draw_hud(const ExoFlight *f)
 	else
 		snprintf(line, sizeof(line), "SPD %4.0f %s", (double)hud, s->hud_unit);
 	exo_text(8.0f, 44.0f, 0.42f, COL_TEXT, line);
-	snprintf(line, sizeof(line), "REAL %5.1f/%5.1f", (double)f->speed, (double)vmax);
+	snprintf(line, sizeof(line), "REAL %5.1f  P %.2f", (double)f->speed, (double)f->pitch);
 	exo_text(8.0f, 62.0f, 0.38f, COL_DIM, line);
 	snprintf(line, sizeof(line), "TILE %03d %03d", f->cell_x, f->cell_z);
 	exo_text(8.0f, 80.0f, 0.38f, COL_DIM, line);
-	snprintf(line, sizeof(line), "DRAW %d/%d CUT %d",
-	         f->tiles_drawn, f->draw_cap, f->tiles_culled);
+	snprintf(line, sizeof(line), "DRAW %d/%d", f->tiles_drawn, f->draw_cap);
 	exo_text(8.0f, 96.0f, 0.38f, COL_DIM, line);
 
 	bar = hud_max > 0.0f ? hud / hud_max : 0.0f;
@@ -489,37 +468,42 @@ static void draw_hud(const ExoFlight *f)
 	if (bar > 1.0f) bar = 1.0f;
 	exo_bot_rect(8.0f, 114.0f, 196.0f, 8.0f, RGB32(30, 30, 40));
 	exo_bot_rect(8.0f, 114.0f, 196.0f * bar, 8.0f,
-	             f->mode == EXO_FLIGHT_HIGH ? RGB32(255, 90, 70)
-	                                       : RGB32(80, 180, 255));
+	             f->charge_armed ? COL_RED : COL_BLUE);
 
-	exo_text(8.0f, 128.0f, 0.38f, COL_ACCENT, "CAM REF");
-	exo_text(90.0f, 128.0f, 0.38f, COL_TEXT,
+	exo_text(8.0f, 128.0f, 0.38f, COL_ACCENT, "CAM");
+	exo_text(50.0f, 128.0f, 0.38f, COL_TEXT,
 	         f->cam_ref == EXO_CAM_SURFACE ? "SURFACE" : "PILOT");
 
-	if (f->run == EXO_RUN_DONE)
-		snprintf(line, sizeof(line), "LAND %.2f BEST %.2f", (double)f->run_t,
-		         (double)f->best_t);
-	else if (f->run == EXO_RUN_GO)
-		snprintf(line, sizeof(line), "TIME %.2f BEST %.2f", (double)f->run_t,
-		         f->best_t > 0.0f ? (double)f->best_t : 0.0);
+	if (f->course == EXO_COURSE_DP1)
+		snprintf(line, sizeof(line), "LAP %d/3  T %.2f", f->laps, (double)f->run_t);
+	else if (f->course == EXO_COURSE_SS4)
+		snprintf(line, sizeof(line), "FIND REAL PAD  T %.2f", (double)f->run_t);
 	else
-		snprintf(line, sizeof(line), "GOAL PURPLE PAD");
-	exo_text(8.0f, 144.0f, 0.38f, COL_ACCENT, line);
+		snprintf(line, sizeof(line), "T %.2f BEST %.2f", (double)f->run_t, (double)f->best_t);
+	exo_text(8.0f, 144.0f, 0.36f, COL_ACCENT, line);
 
 	draw_slider("RENDER R", rend_t, 1, 8.0f, 168.0f, 196.0f);
-	snprintf(line, sizeof(line), "%d", f->render_r);
-	exo_text(170.0f, 168.0f, 0.38f, COL_TEXT, line);
-
 	draw_pad_graph(f);
 
 	if (f->mode == EXO_FLIGHT_HIGH)
-		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "Y SPEED  A BRAKE  B TOFF");
+		exo_text(8.0f, 200.0f, 0.30f, COL_DIM, "Y SPEED  A BRAKE  B TOFF  L/R STRAFE");
 	else
-		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "Y SPEED  B JUMP  X SISTER");
-	exo_text(8.0f, 214.0f, 0.32f, COL_DIM, "ZR CAM  DPAD R  TOUCH REF");
-	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT RESET  START PAUSE");
+		exo_text(8.0f, 200.0f, 0.30f, COL_DIM, "PAD LOOK  L/R STRAFE  Y SPEED");
+	exo_text(8.0f, 214.0f, 0.30f, COL_DIM, "ZR CAM  SELECT RESET  START PAUSE");
 	if (g_paused)
 		exo_text(214.0f, 220.0f, 0.45f, COL_ACCENT, "PAUSED");
+}
+
+static void draw_world(ExoEye eye)
+{
+	exo_render_eye(eye, COL_SKY);
+	draw_layers(eye, &g_flight);
+	draw_floor(eye, &g_flight);
+	draw_trees(&g_flight);
+	draw_pilot(&g_flight);
+	draw_speed_veil(&g_flight);
+	draw_charge_bar(&g_flight);
+	draw_top_overlay(&g_flight);
 }
 
 int main(void)
@@ -527,7 +511,6 @@ int main(void)
 	if (!exo_init())
 		return 1;
 	exo_flight_init(&g_flight, EXO_PILOT_SHIRAMMY);
-	try_load_etm();
 	load_gfx();
 	while (exo_frame_begin()) {
 		const ExoInput *in = exo_input();
@@ -535,35 +518,34 @@ int main(void)
 
 		g_fps = g_fps * 0.90f + (dt > 0.0001f ? (1.0f / dt) : 60.0f) * 0.10f;
 
-		if (exo_down(EXO_BTN_START))
-			g_paused = !g_paused;
-		if (exo_down(EXO_BTN_X)) {
-			exo_flight_set_pilot(&g_flight,
-				g_flight.pilot == EXO_PILOT_SHIRAMMY ? EXO_PILOT_REXXI : EXO_PILOT_SHIRAMMY);
+		if (g_menu) {
+			if (exo_down(EXO_BTN_UP) || exo_down(EXO_BTN_DOWN))
+				g_pick = 1 - g_pick;
+			if (exo_down(EXO_BTN_A)) {
+				start_course(g_pick == 0 ? EXO_COURSE_SS4 : EXO_COURSE_DP1);
+				g_menu = 0;
+			}
+		} else {
+			if (exo_down(EXO_BTN_START))
+				g_paused = !g_paused;
+			if (exo_down(EXO_BTN_X))
+				exo_flight_set_pilot(&g_flight,
+					g_flight.pilot == EXO_PILOT_SHIRAMMY ? EXO_PILOT_REXXI : EXO_PILOT_SHIRAMMY);
+			apply_tune(&g_flight, in);
+			if (!g_paused)
+				exo_flight_tick(&g_flight, in, dt);
 		}
-		apply_tune(&g_flight, in);
-		if (!g_paused)
-			exo_flight_tick(&g_flight, in, dt);
+
 		exo_render_begin();
-		exo_render_eye(EXO_EYE_LEFT, COL_SKY);
-		draw_layers(EXO_EYE_LEFT, &g_flight);
-		draw_floor(EXO_EYE_LEFT, &g_flight);
-		draw_trees(&g_flight);
-		draw_pilot(&g_flight);
-		draw_speed_veil(&g_flight);
-		draw_charge_bar(&g_flight);
-		draw_top_overlay(&g_flight);
-		if (exo_slider_3d() > 0.05f) {
-			exo_render_eye(EXO_EYE_RIGHT, COL_SKY);
-			draw_layers(EXO_EYE_RIGHT, &g_flight);
-			draw_floor(EXO_EYE_RIGHT, &g_flight);
-			draw_trees(&g_flight);
-			draw_pilot(&g_flight);
-			draw_speed_veil(&g_flight);
-			draw_charge_bar(&g_flight);
-			draw_top_overlay(&g_flight);
+		if (!g_menu) {
+			draw_world(EXO_EYE_LEFT);
+			if (exo_slider_3d() > 0.05f)
+				draw_world(EXO_EYE_RIGHT);
+			draw_hud(&g_flight);
+		} else {
+			exo_render_eye(EXO_EYE_LEFT, COL_SKY);
+			draw_menu();
 		}
-		draw_hud(&g_flight);
 		exo_render_end();
 		exo_frame_end();
 	}
