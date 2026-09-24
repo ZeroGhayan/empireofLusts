@@ -16,6 +16,7 @@ typedef struct ExoTilemap {
 	uint16_t h;
 	uint16_t tile_px;
 	uint16_t tile_count;
+	uint16_t atlas_cols;
 	uint16_t cells[EXO_TILEMAP_MAX * EXO_TILEMAP_MAX];
 	bool     loaded;
 } ExoTilemap;
@@ -25,6 +26,7 @@ void     exo_tilemap_demo(ExoTilemap *m);
 void     exo_tilemap_place_springs(ExoTilemap *m);
 void     exo_tilemap_place_pad(ExoTilemap *m);
 bool     exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size);
+void     exo_tilemap_set_atlas(ExoTilemap *m, uint16_t cols, uint16_t count);
 uint16_t exo_tilemap_at(const ExoTilemap *m, int x, int y);
 bool     exo_tilemap_solid(const ExoTilemap *m, int x, int y);
 bool     exo_tilemap_spring(const ExoTilemap *m, int x, int y);
