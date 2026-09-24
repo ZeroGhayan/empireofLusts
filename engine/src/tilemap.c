@@ -25,28 +25,50 @@ uint16_t exo_tile_rgb_index(uint8_t r, uint8_t g, uint8_t b)
 uint16_t exo_tilemap_at(const ExoTilemap *m, int x, int y)
 {
 	if (!m || x < 0 || y < 0 || x >= (int)m->w || y >= (int)m->h)
-		return 1; /* fora = barreira */
+		return EXO_TILE_WALL;
 	return m->cells[y * m->w + x];
 }
 
 bool exo_tilemap_solid(const ExoTilemap *m, int x, int y)
 {
-	uint16_t t = exo_tilemap_at(m, x, y);
-	return t == 1;
+	return exo_tilemap_at(m, x, y) == EXO_TILE_WALL;
 }
 
-/*
- * Demo 128×128:
- *   0 piso   1 barreira   2 estrada   3 faixa   4 acostamento
- * Estrada em cruz no centro + anel, para testar virada e histerese.
- */
+bool exo_tilemap_spring(const ExoTilemap *m, int x, int y)
+{
+	return exo_tilemap_at(m, x, y) == EXO_TILE_SPRING;
+}
+
+void exo_tilemap_place_springs(ExoTilemap *m)
+{
+	int mid;
+	int spots[4][2];
+	int i;
+
+	if (!m || m->w < 16 || m->h < 16)
+		return;
+	mid = (int)m->w / 2;
+	spots[0][0] = mid;     spots[0][1] = mid - 6;
+	spots[1][0] = mid;     spots[1][1] = mid + 6;
+	spots[2][0] = mid - 6; spots[2][1] = mid;
+	spots[3][0] = mid + 6; spots[3][1] = mid;
+	for (i = 0; i < 4; ++i) {
+		int x = spots[i][0];
+		int z = spots[i][1];
+		if (x > 0 && z > 0 && x < (int)m->w - 1 && z < (int)m->h - 1)
+			m->cells[z * m->w + x] = EXO_TILE_SPRING;
+	}
+	if (m->tile_count < 7)
+		m->tile_count = 7;
+}
+
 void exo_tilemap_demo(ExoTilemap *m)
 {
 	int x, z;
 	int mid;
 
 	exo_tilemap_clear(m);
-	m->tile_count = 5;
+	m->tile_count = 7;
 	m->loaded = true;
 	mid = EXO_TILEMAP_MAX / 2;
 
@@ -60,7 +82,7 @@ void exo_tilemap_demo(ExoTilemap *m)
 
 			if (x == 0 || z == 0 || x == EXO_TILEMAP_MAX - 1 ||
 			    z == EXO_TILEMAP_MAX - 1)
-				t = 1;
+				t = EXO_TILE_WALL;
 			else if (adx <= 1 || adz <= 1)
 				t = (adx == 0 || adz == 0) ? 3 : 2;
 			else if (adx <= 3 || adz <= 3)
@@ -70,6 +92,7 @@ void exo_tilemap_demo(ExoTilemap *m)
 			m->cells[z * m->w + x] = t;
 		}
 	}
+	exo_tilemap_place_springs(m);
 }
 
 bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
@@ -92,7 +115,6 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 	h       = (uint16_t)(p[6] | (p[7] << 8));
 	tile_px = (uint16_t)(p[8] | (p[9] << 8));
 	count   = (uint16_t)(p[10] | (p[11] << 8));
-	/* p[12..15] flags, reservado */
 
 	if (w == 0 || h == 0 || w > EXO_TILEMAP_MAX || h > EXO_TILEMAP_MAX)
 		return false;
@@ -113,5 +135,6 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 		m->cells[i] = (uint16_t)(c[0] | (c[1] << 8));
 	}
 	m->loaded = true;
+	exo_tilemap_place_springs(m);
 	return true;
 }

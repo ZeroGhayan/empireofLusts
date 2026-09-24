@@ -92,10 +92,8 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	float vmax = exo_flight_vmax(f);
 	float fwd_x = sinf(f->yaw);
 	float fwd_z = cosf(f->yaw);
-	float rgt_x =  cosf(f->yaw);
-	float rgt_z = -sinf(f->yaw);
-	int air;
-	int hold_accel, hold_brake;
+	float rgt_x, rgt_z;
+	int hold_accel, hold_brake, stable;
 
 	if (dt <= 0.0f || dt > 0.05f)
 		dt = 1.0f / 60.0f;
@@ -105,6 +103,11 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	f->draw_cap = 48 + f->render_r * f->render_r;
 	if (f->draw_cap > 720)
 		f->draw_cap = 720;
+	if (f->spring_cd > 0.0f) {
+		f->spring_cd -= dt;
+		if (f->spring_cd < 0.0f)
+			f->spring_cd = 0.0f;
+	}
 
 	if (tap_zr)
 		f->cam_ref = (f->cam_ref == EXO_CAM_SURFACE) ? EXO_CAM_PILOT : EXO_CAM_SURFACE;
@@ -115,29 +118,40 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		turn -= in->cstick_x;
 	}
 
-	air = !f->grounded;
-	f->flying = air;
-
-	if (f->mode == EXO_FLIGHT_HIGH || air) {
-		hold_accel = hold_y;
-		hold_brake = hold_a;
-	} else {
-		hold_accel = hold_a;
-		hold_brake = 0;
-	}
+	hold_accel = hold_y;
+	hold_brake = hold_a;
 
 	if (hold_accel)
 		f->charge += dt / EXO_FLIGHT_CHARGE_SEC;
 	else
-		f->charge -= dt / 0.45f;
+		f->charge -= dt / EXO_FLIGHT_CHARGE_DECAY;
 	f->charge = clampf(f->charge, 0.0f, 1.0f);
 
-	if (f->mode == EXO_FLIGHT_HIGH || air) {
+	if (f->charge >= 1.0f) {
+		f->charge_armed = 1;
+		if (f->mode != EXO_FLIGHT_HIGH) {
+			f->mode = EXO_FLIGHT_HIGH;
+			f->cruise = f->speed;
+			if (f->cruise < s->walk)
+				f->cruise = s->walk;
+			if (f->cruise > vmax)
+				f->cruise = vmax;
+		}
+	} else if (f->charge <= 0.0f && f->charge_armed) {
+		f->charge_armed = 0;
+		f->mode = EXO_FLIGHT_LOW;
+		f->flying = 0;
+	}
+
+	stable = f->charge_armed && f->charge > 0.0f;
+	f->flying = (f->mode == EXO_FLIGHT_HIGH && !f->grounded);
+
+	if (f->mode == EXO_FLIGHT_HIGH || f->flying) {
 		f->yaw += sx * s->turn_high * dt;
 		fwd_x = sinf(f->yaw);
 		fwd_z = cosf(f->yaw);
 
-		if (f->mode == EXO_FLIGHT_HIGH) {
+		if (stable) {
 			if (hold_accel)
 				f->cruise += s->accel * dt;
 			else if (hold_brake)
@@ -146,13 +160,11 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 			f->speed = f->cruise;
 		} else {
 			cap = hold_accel ? vmax : s->walk;
-			if (hold_accel) {
-				if (f->speed < cap)
-					f->speed += s->accel * dt;
-			} else {
+			if (hold_accel && f->speed < cap)
+				f->speed += s->accel * dt;
+			else if (!hold_accel)
 				f->speed -= s->coast * dt;
-			}
-			f->speed = clampf(f->speed, 0.0f, cap);
+			f->speed = clampf(f->speed, 0.0f, vmax);
 		}
 
 		step = f->speed * dt;
@@ -163,10 +175,10 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		f->wish_x = fwd_x;
 		f->wish_z = fwd_z;
 
-		{
+		if (f->flying) {
 			float want = (-sy) * s->climb;
 			if (fabsf(sy) < 0.12f)
-				want = f->grounded ? 0.0f : -10.0f;
+				want = -10.0f;
 			f->vy += (want - f->vy) * clampf(dt * 8.0f, 0.0f, 1.0f);
 		}
 	} else {
@@ -188,23 +200,39 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		}
 		f->wish_x = mx;
 		f->wish_z = mz;
-		cap = hold_accel ? vmax : s->walk;
-		if (mag > 0.05f) {
-			float target = cap * mag;
-			if (f->speed < target)
-				f->speed += s->accel * dt;
-			else
-				f->speed -= s->coast * dt;
-			f->speed = clampf(f->speed, 0.0f, target);
-			step = f->speed * dt;
-			if (step > EXO_FLIGHT_CELL * 0.45f)
-				step = EXO_FLIGHT_CELL * 0.45f;
-			nx = f->x + mx * step;
-			nz = f->z + mz * step;
+
+		if (stable) {
+			if (hold_accel)
+				f->cruise += s->accel * dt;
+			else if (hold_brake)
+				f->cruise -= s->coast * 1.6f * dt;
+			f->cruise = clampf(f->cruise, 0.0f, vmax);
+			f->speed = f->cruise;
 		} else {
-			f->speed -= s->coast * dt;
-			if (f->speed < 0.0f)
-				f->speed = 0.0f;
+			cap = hold_accel ? vmax : s->walk;
+			if (mag > 0.05f) {
+				float target = cap * mag;
+				if (f->speed < target)
+					f->speed += s->accel * dt;
+				else
+					f->speed -= s->coast * dt;
+				f->speed = clampf(f->speed, 0.0f, target);
+			} else {
+				f->speed -= s->coast * dt;
+				if (f->speed < 0.0f)
+					f->speed = 0.0f;
+			}
+		}
+
+		step = f->speed * dt;
+		if (step > EXO_FLIGHT_CELL * 0.45f)
+			step = EXO_FLIGHT_CELL * 0.45f;
+		if (mag > 0.05f || stable) {
+			float ux = (mag > 0.05f) ? mx : fwd_x;
+			float uz = (mag > 0.05f) ? mz : fwd_z;
+			nx = f->x + ux * step;
+			nz = f->z + uz * step;
+		} else {
 			nx = f->x;
 			nz = f->z;
 		}
@@ -225,12 +253,27 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	f->move_z = f->wish_z;
 
 	if (tap_b) {
-		f->vy = s->jump;
-		f->grounded = 0;
-		f->flying = 1;
+		if (f->mode == EXO_FLIGHT_HIGH) {
+			f->vy = s->jump * 1.25f;
+			f->grounded = 0;
+			f->flying = 1;
+		} else if (f->grounded) {
+			f->vy = s->jump;
+			f->grounded = 0;
+			f->flying = 0;
+		}
 	}
 
-	if (f->mode == EXO_FLIGHT_LOW && f->grounded)
+	if (f->grounded && f->spring_cd <= 0.0f &&
+	    exo_tilemap_spring(&f->map, f->cell_x, f->cell_z)) {
+		f->vy = EXO_FLIGHT_SPRING_VY;
+		f->grounded = 0;
+		f->spring_cd = 0.40f;
+		if (f->mode == EXO_FLIGHT_HIGH)
+			f->flying = 1;
+	}
+
+	if (!(f->flying && f->mode == EXO_FLIGHT_HIGH))
 		f->vy -= EXO_FLIGHT_GRAV * dt;
 
 	f->y += f->vy * dt;
@@ -239,10 +282,10 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		if (f->vy < 0.0f)
 			f->vy = 0.0f;
 		f->grounded = 1;
-		f->flying = 0;
+		if (f->mode != EXO_FLIGHT_HIGH)
+			f->flying = 0;
 	} else {
 		f->grounded = 0;
-		f->flying = 1;
 		if (f->y > EXO_FLIGHT_Y_MAX) {
 			f->y = EXO_FLIGHT_Y_MAX;
 			if (f->vy > 0.0f)
@@ -250,20 +293,7 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		}
 	}
 
-	if (f->mode == EXO_FLIGHT_LOW &&
-	    (f->speed >= EXO_FLIGHT_HYST_ENTER || f->charge >= 1.0f)) {
-		f->mode = EXO_FLIGHT_HIGH;
-		f->cruise = f->speed;
-		if (f->cruise < EXO_FLIGHT_HYST_ENTER)
-			f->cruise = EXO_FLIGHT_HYST_ENTER;
-		if (f->cruise > vmax)
-			f->cruise = vmax;
-		f->speed = f->cruise;
-		f->charge = 1.0f;
-	} else if (f->mode == EXO_FLIGHT_HIGH && f->speed <= EXO_FLIGHT_HYST_LEAVE) {
-		f->mode = EXO_FLIGHT_LOW;
-		f->cruise = 0.0f;
-	}
+	f->flying = (f->mode == EXO_FLIGHT_HIGH && !f->grounded);
 
 	{
 		float want_bank = 0.0f;
@@ -275,9 +305,11 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	f->focal = EXO_FLIGHT_FOCAL;
 
 	if (f->mode == EXO_FLIGHT_HIGH || f->flying) {
-		f->cam_h = 28.0f + f->y;
-		f->cam_dist = 42.0f;
-		f->horizon = 88.0f - clampf(f->y * 0.08f, 0.0f, 18.0f);
+		/* pes pregos perto do centro-baixo; altitude nao empurra a sprite */
+		float eye = 24.0f;
+		f->cam_dist = 48.0f;
+		f->cam_h = f->y + eye;
+		f->horizon = EXO_FLIGHT_PIN_Y - eye * (EXO_FLIGHT_FOCAL / f->cam_dist);
 	} else {
 		f->cam_h = 50.0f + f->y;
 		f->cam_dist = 58.0f;
@@ -342,14 +374,16 @@ void exo_flight_apply_ref(const ExoFlight *f, float *sx, float *sy)
 {
 	float cx = 200.0f;
 	float cy = f->horizon;
-	float c, s, dx, dy;
+	float b, c, s, dx, dy;
 
 	if (f->cam_ref != EXO_CAM_PILOT)
 		return;
 	if (fabsf(f->bank) < 0.002f)
 		return;
-	c = cosf(f->bank);
-	s = sinf(f->bank);
+	/* sinal invertido face ao SURFACE: o mundo roda com o movimento */
+	b = -f->bank;
+	c = cosf(b);
+	s = sinf(b);
 	dx = *sx - cx;
 	dy = *sy - cy;
 	*sx = cx + dx * c - dy * s;
