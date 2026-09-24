@@ -83,6 +83,7 @@ typedef struct ExoFlight {
 	float focal;
 	float bank;
 	float charge;
+	int   charge_armed;
 	int   grounded;
 	int   flying;
 	int   cell_x, cell_z;
