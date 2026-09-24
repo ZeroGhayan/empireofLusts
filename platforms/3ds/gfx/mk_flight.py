@@ -132,13 +132,12 @@ def find_tiles_png(folder):
             print("mk_flight: encontrou", p)
             return p
     print("mk_flight: tiles.png NAO encontrado para", folder)
-    for p in names:
-        print("          tentou", os.path.abspath(p))
     return None
 
 
-def placeholder_sheet(stem):
-    w, h = 256, 128
+def placeholder_sheet(stem, step):
+    cols, rows = 8, 4
+    w, h = cols * step, rows * step
     p = fill(w, h, (40, 40, 50, 255))
     pal = [
         (46, 110, 58, 255), (28, 28, 32, 255), (58, 62, 74, 255),
@@ -146,24 +145,25 @@ def placeholder_sheet(stem):
         (220, 36, 36, 255), (80, 160, 90, 255),
     ]
     i = 0
-    for y in range(0, h, 32):
-        for x in range(0, w, 32):
-            rect(p, w, h, x + 1, y + 1, 30, 30, pal[i % 8])
+    for y in range(0, h, step):
+        for x in range(0, w, step):
+            pad = 1 if step > 4 else 0
+            rect(p, w, h, x + pad, y + pad, step - pad * 2, step - pad * 2, pal[i % 8])
             i += 1
     path = os.path.join(DIR, stem + "_sheet.png")
     png(path, w, h, p)
     return path
 
 
-def slice_tileset(src_png, stem):
+def slice_tileset(src_png, stem, step):
     try:
         from PIL import Image
     except ImportError:
         print("mk_flight: ERRO Pillow ausente — pip3 install --user Pillow")
         src_png = None
     if not src_png:
-        src_png = placeholder_sheet(stem)
-        print("mk_flight: placeholder", stem)
+        src_png = placeholder_sheet(stem, step)
+        print("mk_flight: placeholder", stem, "step", step)
         try:
             from PIL import Image
         except ImportError:
@@ -177,14 +177,13 @@ def slice_tileset(src_png, stem):
     os.makedirs(out)
     frames = []
     i = 0
-    step = 32
-    if w < 32 or h < 32:
-        step = min(w, h) if min(w, h) > 0 else 32
+    if step < 1:
+        step = 32
     for y in range(0, h, step):
         for x in range(0, w, step):
             tile = im.crop((x, y, min(x + step, w), min(y + step, h)))
-            if tile.size != (32, 32):
-                canvas = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+            if tile.size != (step, step):
+                canvas = Image.new("RGBA", (step, step), (0, 0, 0, 0))
                 canvas.paste(tile, (0, 0))
                 tile = canvas
             fn = "%03d.png" % i
@@ -197,15 +196,16 @@ def slice_tileset(src_png, stem):
             break
     if frames:
         t3s(stem + ".t3s", frames, "rgb565")
-        print("mk_flight: %s %d tiles de %s (%dx%d)" % (stem, len(frames), src_png, w, h))
+        print("mk_flight: %s %d tiles %dx%d de %s (%dx%d)" % (
+            stem, len(frames), step, step, src_png, w, h))
     else:
         print("mk_flight: %s ZERO tiles" % stem)
 
 
 def install_course_tiles():
-    for stem, folder in (("ss4_tiles", "ss4"), ("dp1_tiles", "dp1")):
-        src = find_tiles_png(folder)
-        slice_tileset(src, stem)
+    # provisório: SS4 32x32 (Sonic CD), DP1 8x8 (SMK). padrão vem depois.
+    slice_tileset(find_tiles_png("ss4"), "ss4_tiles", 32)
+    slice_tileset(find_tiles_png("dp1"), "dp1_tiles", 8)
 
 
 def main():
