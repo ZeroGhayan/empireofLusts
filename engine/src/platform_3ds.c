@@ -182,7 +182,6 @@ static void bot_px(int x, int y, u8 r, u8 g, u8 b)
 	u32 off;
 	if (!g_botfb || x < 0 || y < 0 || x >= 320 || y >= 240)
 		return;
-	/* framebuffer de baixo: 240x320, BGR8, rodado */
 	off = ((u32)x * 240u + (u32)(239 - y)) * 3u;
 	g_botfb[off + 0] = b;
 	g_botfb[off + 1] = g;
@@ -279,7 +278,7 @@ void exo_text_begin(void)
 
 void exo_text(float x, float y, float scale, uint32_t rgba, const char *s)
 {
-	int px = (scale < 0.6f) ? 2 : 3;
+	int px = (scale < 0.34f) ? 1 : ((scale < 0.6f) ? 2 : 3);
 	int cx = (int)x, i, row, col;
 	u8 r, g, b;
 
