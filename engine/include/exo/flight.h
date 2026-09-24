@@ -6,14 +6,16 @@
 #include "exo/tilemap.h"
 
 #define EXO_FLIGHT_CELL        32.0f
-#define EXO_FLIGHT_SLOPE_TAN   2.747f   /* tan(70°) */
-#define EXO_FLIGHT_RENDER      14       /* tiles à frente / lado */
+#define EXO_FLIGHT_SLOPE_TAN   2.747f
+#define EXO_FLIGHT_RENDER      16
 #define EXO_FLIGHT_HYST_ENTER  20.0f
 #define EXO_FLIGHT_HYST_LEAVE  10.0f
+#define EXO_FLIGHT_NEAR        8.0f
+#define EXO_FLIGHT_GRAV        90.0f
 
 typedef enum ExoFlightMode {
-	EXO_FLIGHT_LOW = 0,  /* Sonic 3D / SM64 */
-	EXO_FLIGHT_HIGH      /* F-Zero / Special Stage */
+	EXO_FLIGHT_LOW = 0,
+	EXO_FLIGHT_HIGH
 } ExoFlightMode;
 
 typedef enum ExoPilot {
@@ -22,12 +24,14 @@ typedef enum ExoPilot {
 } ExoPilot;
 
 typedef struct ExoPilotStats {
-	float vmax;          /* unidades internas / s */
+	float vmax;
+	float walk;          /* tecto LOW sem A */
 	float accel;
-	float brake;
-	float turn_low;      /* rad/s */
+	float coast;
+	float turn_low;
 	float turn_high;
-	float hud_scale;     /* real → aparente */
+	float jump;
+	float hud_scale;
 	const char *hud_unit;
 	const char *name;
 } ExoPilotStats;
@@ -36,11 +40,13 @@ typedef struct ExoFlight {
 	ExoTilemap map;
 	ExoPilot   pilot;
 	ExoFlightMode mode;
-	float x, z;          /* mundo, origem no centro do tile (0,0) */
-	float yaw;           /* 0 = +Z */
-	float speed;         /* real */
+	float x, y, z;
+	float yaw;
+	float speed;
+	float vy;
 	float cam_x, cam_z, cam_h, cam_dist;
 	float horizon;
+	int   grounded;
 	int   cell_x, cell_z;
 	int   tiles_drawn;
 } ExoFlight;
@@ -55,8 +61,6 @@ float exo_flight_hud_speed(const ExoFlight *f);
 void  exo_flight_eye_offset(const ExoFlight *f, float slider, int eye_sign,
                             float *ox, float *oy);
 
-/* Projecta um ponto do chão (y = 0) para a tela 400×240.
-   Devolve 0 se estiver atrás da câmera. */
 int   exo_flight_project(const ExoFlight *f, float wx, float wz,
                          float eye_x, float *sx, float *sy);
 
