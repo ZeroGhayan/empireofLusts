@@ -1,0 +1,15 @@
+# build 3DS
+platforms/3ds/build/
+platforms/3ds/romfs/
+platforms/3ds/gfx/*.png
+*.3dsx
+*.elf
+*.smdh
+*.o
+*.d
+
+# placeholders de terceiros — ficam só no notebook
+Ref
+*.mp3
+*.m4a
+*.wav
