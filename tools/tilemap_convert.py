@@ -6,10 +6,7 @@ pack     tiles.png + map.png (cor = indice) -> map.etm
 demo     mapa de cruz 128x128 do proto
 
 map.png: R = idx&255, G = idx>>8, B = 0x20
-.etm: magic ETM1, u16 w h tile_px count, u16 flags, u16 cells[w*h]
-
-python3 tools/tilemap_convert.py extract Ref/Sprites/mapa.png --tile 32 --size 128 --out /tmp/flight
-python3 tools/tilemap_convert.py pack /tmp/flight/tiles.png /tmp/flight/map.png --out platforms/3ds/romfs/flight/map.etm
+.etm: magic ETM1, u16 w h tile_px count, u16 flags=atlas_cols, u16 cells[w*h]
 """
 from __future__ import annotations
 
@@ -28,12 +25,12 @@ def die(msg, code=1):
     sys.exit(code)
 
 
-def pack_etm(w, h, tile_px, count, cells):
+def pack_etm(w, h, tile_px, count, cells, cols=0):
     if len(cells) != w * h:
         die("cells %d != %d*%d" % (len(cells), w, h))
     buf = bytearray()
     buf += struct.pack("<IHHHH", MAGIC, w, h, tile_px, count)
-    buf += struct.pack("<H", 0)
+    buf += struct.pack("<H", cols & 0xFFFF)
     for c in cells:
         buf += struct.pack("<H", c & 0xFFFF)
     return bytes(buf)
@@ -128,13 +125,12 @@ def cmd_extract(args):
     os.makedirs(out, exist_ok=True)
     write_png_rgba(os.path.join(out, "tiles.png"), aw, rows * tile, bytes(atlas))
     write_map_png(os.path.join(out, "map.png"), gw, gh, cells)
-    etm = pack_etm(gw, gh, tile, len(order), cells)
+    etm = pack_etm(gw, gh, tile, len(order), cells, cols)
     path = os.path.join(out, "map.etm")
     with open(path, "wb") as f:
         f.write(etm)
-    print("grade %dx%d  tile %d  unicas %d" % (gw, gh, tile, len(order)))
+    print("grade %dx%d  tile %d  unicas %d  cols %d" % (gw, gh, tile, len(order), cols))
     print("tiles.png map.png map.etm em", out)
-    print("copia map.etm para platforms/3ds/romfs/flight/")
 
 
 def load_png_rgba(path):
@@ -160,11 +156,11 @@ def cmd_pack(args):
             if idx >= count:
                 idx = r
             cells.append(idx)
-    etm = pack_etm(mw, mh, tile, count, cells)
+    etm = pack_etm(mw, mh, tile, count, cells, cols)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "wb") as f:
         f.write(etm)
-    print("map.etm", args.out, "%dx%d tiles=%d %d bytes" % (mw, mh, count, len(etm)))
+    print("map.etm", args.out, "%dx%d tiles=%d cols=%d" % (mw, mh, count, cols))
 
 
 def cmd_demo(args):
@@ -197,7 +193,7 @@ def cmd_demo(args):
                 o = (py * (cols * tile) + i * tile + px) * 4
                 atlas[o:o + 4] = bytes(c)
     write_png_rgba(os.path.join(out, "tiles.png"), cols * tile, tile, bytes(atlas))
-    etm = pack_etm(n, n, tile, 5, cells)
+    etm = pack_etm(n, n, tile, 5, cells, cols)
     with open(os.path.join(out, "map.etm"), "wb") as f:
         f.write(etm)
     print("demo 128x128 ->", out)
