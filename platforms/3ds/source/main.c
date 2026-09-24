@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #define RGB32(r, g, b) \
 	((u32)(r) | ((u32)(g) << 8) | ((u32)(b) << 16) | (255u << 24))
@@ -16,6 +17,9 @@
 #define COL_TEXT   RGB32(240, 240, 240)
 #define COL_DIM    RGB32(160, 170, 190)
 #define COL_ACCENT RGB32(255, 210, 64)
+#define COL_PAD    RGB32(80, 200, 255)
+#define COL_HEAD   RGB32(255, 210, 64)
+#define COL_SLIDE  RGB32(70, 200, 120)
 
 static const u32 TILE_COL[] = {
 	RGB32( 46, 110,  58),
@@ -34,6 +38,8 @@ static C2D_SpriteSheet g_shi;
 static C2D_SpriteSheet g_rex;
 static bool g_have_bg[3];
 static bool g_paused;
+static int  g_tune; /* 0 = rexxi vmax, 1 = render r */
+static float g_fps = 60.0f;
 
 static u32 tile_color(uint16_t id)
 {
@@ -121,21 +127,58 @@ static void draw_poly(const float *s, const float *t, int n, u32 col)
 		C2D_DrawTriangle(s[0], t[0], col, s[k], t[k], col, s[k + 1], t[k + 1], col, 0.3f);
 }
 
-static int emit_tile(ExoFlight *f, float ox, int tx, int tz, int *drawn, int cap)
+static int quad_sane(const float *sx, const float *sy, int n, float horizon)
+{
+	int i, sky = 0;
+	float minx =  9999.0f, maxx = -9999.0f;
+	float miny =  9999.0f, maxy = -9999.0f;
+
+	for (i = 0; i < n; ++i) {
+		if (sx[i] < -80.0f || sx[i] > 480.0f)
+			return 0;
+		if (sy[i] < -40.0f || sy[i] > 280.0f)
+			return 0;
+		if (sx[i] < minx) minx = sx[i];
+		if (sx[i] > maxx) maxx = sx[i];
+		if (sy[i] < miny) miny = sy[i];
+		if (sy[i] > maxy) maxy = sy[i];
+		if (sy[i] < horizon - 6.0f)
+			sky++;
+	}
+	if (sky == n)
+		return 0;
+	if ((maxx - minx) > 360.0f && (maxy - miny) > 160.0f)
+		return 0;
+	return 1;
+}
+
+static int emit_tile(ExoFlight *f, float ox, int tx, int tz,
+                     int *drawn, int *culled, int cap, float far_z)
 {
 	float sx[6], sy[6];
 	int nv = 0;
-	float pad = 0.7f;
-	float wx, wz;
+	float wx, wz, lz;
 
 	if (*drawn >= cap)
 		return 0;
-	if (tx < 0 || tz < 0 || tx >= (int)f->map.w || tz >= (int)f->map.h)
+	if (tx < 0 || tz < 0 || tx >= (int)f->map.w || tz >= (int)f->map.h) {
+		(*culled)++;
 		return 1;
-	wx = (float)tx * EXO_FLIGHT_CELL - pad;
-	wz = (float)tz * EXO_FLIGHT_CELL - pad;
-	if (!exo_flight_clip_quad(f, wx, wz, EXO_FLIGHT_CELL + pad * 2.0f, ox, sx, sy, &nv))
+	}
+	wx = (float)tx * EXO_FLIGHT_CELL;
+	wz = (float)tz * EXO_FLIGHT_CELL;
+	if (!exo_flight_tile_visible(f, wx, wz, EXO_FLIGHT_CELL, ox, far_z, &lz)) {
+		(*culled)++;
 		return 1;
+	}
+	if (!exo_flight_clip_quad(f, wx, wz, EXO_FLIGHT_CELL, ox, sx, sy, &nv)) {
+		(*culled)++;
+		return 1;
+	}
+	if (!quad_sane(sx, sy, nv, f->horizon)) {
+		(*culled)++;
+		return 1;
+	}
 	draw_poly(sx, sy, nv, tile_color(exo_tilemap_at(&f->map, tx, tz)));
 	(*drawn)++;
 	return 1;
@@ -146,36 +189,52 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	float ox, oy;
 	int cx = f->cell_x;
 	int cz = f->cell_z;
-	int dx, dz, drawn = 0;
-	const int R = EXO_FLIGHT_RENDER;
+	int ring, dx, dz, drawn = 0, culled = 0;
+	int R = f->render_r;
+	int cap = f->draw_cap;
+	float far_z;
+
+	if (R < EXO_FLIGHT_RENDER_MIN) R = EXO_FLIGHT_RENDER_MIN;
+	if (R > EXO_FLIGHT_RENDER_MAX) R = EXO_FLIGHT_RENDER_MAX;
+	if (cap < 40) cap = 40;
+
+	far_z = (float)R * EXO_FLIGHT_CELL + f->cam_dist;
 
 	exo_flight_eye_offset(f, exo_slider_3d(), (int)eye, &ox, &oy);
 	(void)oy;
 
-	/* 1. anel perto — preenche debaixo dos pes, nunca fica de fora do cap */
-	for (dz = -3; dz <= 8; ++dz)
-		for (dx = -8; dx <= 8; ++dx)
-			emit_tile(f, ox, cx + dx, cz + dz, &drawn, 400);
-
-	/* 2. resto, longe → perto, com tecto */
-	for (dz = R; dz >= 9; --dz)
-		for (dx = -R; dx <= R; ++dx)
-			if (!emit_tile(f, ox, cx + dx, cz + dz, &drawn, 280))
-				goto done;
+	/* longe → perto: tiles próximas cobrem as distantes */
+	for (ring = R; ring >= 0; --ring) {
+		int inner = ring == 0 ? 0 : ring;
+		for (dz = -inner; dz <= inner; ++dz) {
+			for (dx = -inner; dx <= inner; ++dx) {
+				int cheb = dx < 0 ? -dx : dx;
+				int czs = dz < 0 ? -dz : dz;
+				if (cheb < ring && czs < ring)
+					continue;
+				if (cheb > ring || czs > ring)
+					continue;
+				if (!emit_tile(f, ox, cx + dx, cz + dz,
+				               &drawn, &culled, cap, far_z))
+					goto done;
+			}
+		}
+	}
 
 done:
 	f->tiles_drawn = drawn;
+	f->tiles_culled = culled;
 }
 
 static int pilot_frame(const ExoFlight *f)
 {
 	if (!f->grounded || f->y > 3.0f)
-		return 3; /* flight */
+		return 3;
 	if (f->mode == EXO_FLIGHT_HIGH)
-		return 2; /* high */
+		return 2;
 	if (f->speed > 2.5f)
-		return 1; /* low / run */
-	return 0; /* idle */
+		return 1;
+	return 0;
 }
 
 static void draw_pilot(const ExoFlight *f)
@@ -208,39 +267,176 @@ static void draw_pilot(const ExoFlight *f)
 	C2D_DrawImageAt(img, px - iw * 0.5f, py - ih, 0.62f, NULL, 1.0f, 1.0f);
 }
 
+static void draw_top_overlay(const ExoFlight *f)
+{
+	char line[32];
+
+	exo_top_text(200.0f, 8.0f, 0.45f, COL_TEXT,
+	             f->mode == EXO_FLIGHT_HIGH ? "HIGH" : "LOW");
+	snprintf(line, sizeof(line), "FPS %.0f", (double)g_fps);
+	exo_top_text(360.0f, 8.0f, 0.42f, COL_ACCENT, line);
+	snprintf(line, sizeof(line), "H %.1f", (double)f->y);
+	exo_top_text(360.0f, 220.0f, 0.42f, COL_TEXT, line);
+}
+
+static void draw_pad_graph(const ExoFlight *f)
+{
+	const float x0 = 214.0f, y0 = 8.0f, s = 90.0f;
+	const float cx = x0 + s * 0.5f, cy = y0 + s * 0.5f;
+	const float arm = 36.0f;
+	float pdx = f->pad_x * arm;
+	float pdy = -f->pad_y * arm; /* ecrã Y cresce para baixo */
+	float hx = sinf(f->yaw) * arm;
+	float hz = -cosf(f->yaw) * arm;
+	float mx = f->wish_x * arm;
+	float mz = -f->wish_z * arm;
+
+	exo_bot_rect(x0, y0, s, s, RGB32(22, 24, 34));
+	exo_bot_rect(x0, y0, s, 1.0f, COL_DIM);
+	exo_bot_rect(x0, y0 + s - 1.0f, s, 1.0f, COL_DIM);
+	exo_bot_rect(x0, y0, 1.0f, s, COL_DIM);
+	exo_bot_rect(x0 + s - 1.0f, y0, 1.0f, s, COL_DIM);
+	exo_bot_line(cx - arm, cy, cx + arm, cy, RGB32(50, 54, 70));
+	exo_bot_line(cx, cy - arm, cx, cy + arm, RGB32(50, 54, 70));
+	/* amarelo = yaw no mundo (+X direita, +Z cima no grafico → -Y ecrã) */
+	exo_bot_line(cx, cy, cx + hx, cy + hz, COL_HEAD);
+	/* verde = vetor de movimento aplicado */
+	exo_bot_line(cx, cy, cx + mx, cy + mz, COL_SLIDE);
+	/* ciano = circle pad cru */
+	exo_bot_line(cx, cy, cx + pdx, cy + pdy, COL_PAD);
+	exo_bot_rect(cx + pdx - 2.0f, cy + pdy - 2.0f, 5.0f, 5.0f, COL_PAD);
+	exo_text(x0, y0 + s + 2.0f, 0.35f, COL_PAD, "PAD");
+	exo_text(x0 + 28.0f, y0 + s + 2.0f, 0.35f, COL_HEAD, "YAW");
+	exo_text(x0 + 56.0f, y0 + s + 2.0f, 0.35f, COL_SLIDE, "MOV");
+}
+
+static void draw_slider(const char *label, float t, int selected,
+                        float x, float y, float w)
+{
+	u32 bar = selected ? COL_ACCENT : RGB32(40, 44, 58);
+	u32 fill = selected ? COL_SLIDE : RGB32(80, 100, 130);
+
+	if (t < 0.0f) t = 0.0f;
+	if (t > 1.0f) t = 1.0f;
+	exo_text(x, y, 0.38f, selected ? COL_ACCENT : COL_DIM, label);
+	exo_bot_rect(x, y + 12.0f, w, 8.0f, bar);
+	exo_bot_rect(x, y + 12.0f, w * t, 8.0f, fill);
+	exo_bot_rect(x + w * t - 2.0f, y + 10.0f, 4.0f, 12.0f, COL_TEXT);
+}
+
+static int touch_in(const ExoInput *in, float x, float y, float w, float h)
+{
+	if (!in || !in->touch_held)
+		return 0;
+	return (float)in->touch_x >= x && (float)in->touch_x <= x + w &&
+	       (float)in->touch_y >= y && (float)in->touch_y <= y + h;
+}
+
+static void apply_tune(ExoFlight *f, const ExoInput *in)
+{
+	float vmax_t, rend_t;
+	const float sx = 8.0f, sw = 196.0f;
+	const float y0 = 132.0f, y1 = 168.0f;
+
+	if (exo_down(EXO_BTN_UP) || exo_down(EXO_BTN_DOWN))
+		g_tune = 1 - g_tune;
+
+	if (touch_in(in, sx, y0, sw, 28.0f))
+		g_tune = 0;
+	if (touch_in(in, sx, y1, sw, 28.0f))
+		g_tune = 1;
+
+	if (touch_in(in, sx, y0, sw, 28.0f)) {
+		vmax_t = ((float)in->touch_x - sx) / sw;
+		if (vmax_t < 0.0f) vmax_t = 0.0f;
+		if (vmax_t > 1.0f) vmax_t = 1.0f;
+		f->rexxi_vmax = EXO_FLIGHT_REXXI_VMIN +
+		                vmax_t * (EXO_FLIGHT_REXXI_VCEIL - EXO_FLIGHT_REXXI_VMIN);
+	}
+	if (touch_in(in, sx, y1, sw, 28.0f)) {
+		rend_t = ((float)in->touch_x - sx) / sw;
+		if (rend_t < 0.0f) rend_t = 0.0f;
+		if (rend_t > 1.0f) rend_t = 1.0f;
+		f->render_r = EXO_FLIGHT_RENDER_MIN +
+		              (int)(rend_t * (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN) + 0.5f);
+	}
+
+	if (exo_down(EXO_BTN_LEFT) || exo_down(EXO_BTN_RIGHT)) {
+		int dir = exo_down(EXO_BTN_RIGHT) ? 1 : -1;
+		if (g_tune == 0) {
+			f->rexxi_vmax += (float)dir * 2.0f;
+			if (f->rexxi_vmax < EXO_FLIGHT_REXXI_VMIN)
+				f->rexxi_vmax = EXO_FLIGHT_REXXI_VMIN;
+			if (f->rexxi_vmax > EXO_FLIGHT_REXXI_VCEIL)
+				f->rexxi_vmax = EXO_FLIGHT_REXXI_VCEIL;
+		} else {
+			f->render_r += dir;
+			if (f->render_r < EXO_FLIGHT_RENDER_MIN)
+				f->render_r = EXO_FLIGHT_RENDER_MIN;
+			if (f->render_r > EXO_FLIGHT_RENDER_MAX)
+				f->render_r = EXO_FLIGHT_RENDER_MAX;
+		}
+	}
+
+	if (exo_down(EXO_BTN_SELECT)) {
+		f->rexxi_vmax = EXO_FLIGHT_REXXI_VMAX;
+		f->render_r = EXO_FLIGHT_RENDER;
+	}
+
+	if (f->pilot == EXO_PILOT_REXXI && f->speed > f->rexxi_vmax)
+		f->speed = f->rexxi_vmax;
+}
+
 static void draw_hud(const ExoFlight *f)
 {
 	const ExoPilotStats *s = exo_pilot_stats(f->pilot);
 	char line[64];
 	float hud = exo_flight_hud_speed(f);
 	float bar;
+	float vmax = exo_flight_vmax(f);
+	float vmax_t = (f->rexxi_vmax - EXO_FLIGHT_REXXI_VMIN) /
+	               (EXO_FLIGHT_REXXI_VCEIL - EXO_FLIGHT_REXXI_VMIN);
+	float rend_t = (float)(f->render_r - EXO_FLIGHT_RENDER_MIN) /
+	               (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN);
 
 	exo_render_bottom(COL_BOT);
 	exo_text_begin();
 	snprintf(line, sizeof(line), "EMPIRE OF LUSTS");
-	exo_text(8.0f, 8.0f, 0.55f, COL_ACCENT, line);
+	exo_text(8.0f, 8.0f, 0.48f, COL_ACCENT, line);
 	snprintf(line, sizeof(line), "%s  %s", s->name,
 	         f->mode == EXO_FLIGHT_HIGH ? "HIGH F-ZERO" : "LOW  3D");
-	exo_text(8.0f, 32.0f, 0.5f, COL_TEXT, line);
+	exo_text(8.0f, 26.0f, 0.42f, COL_TEXT, line);
 	snprintf(line, sizeof(line), "SPD %3.0f %s", (double)hud, s->hud_unit);
-	exo_text(8.0f, 56.0f, 0.5f, COL_TEXT, line);
-	snprintf(line, sizeof(line), "REAL %5.1f / %5.1f", (double)f->speed, (double)s->vmax);
-	exo_text(8.0f, 80.0f, 0.45f, COL_DIM, line);
-	snprintf(line, sizeof(line), "TILE %03d %03d  DRAW %d", f->cell_x, f->cell_z, f->tiles_drawn);
-	exo_text(8.0f, 104.0f, 0.45f, COL_DIM, line);
-	snprintf(line, sizeof(line), "A hold speed   B jump");
-	exo_text(8.0f, 160.0f, 0.4f, COL_DIM, line);
-	snprintf(line, sizeof(line), "PAD move  L/R look  X sister");
-	exo_text(8.0f, 180.0f, 0.4f, COL_DIM, line);
-	if (g_paused)
-		exo_text(8.0f, 208.0f, 0.5f, COL_ACCENT, "PAUSED");
-	bar = f->speed / s->vmax;
+	exo_text(8.0f, 44.0f, 0.42f, COL_TEXT, line);
+	snprintf(line, sizeof(line), "REAL %5.1f/%5.1f", (double)f->speed, (double)vmax);
+	exo_text(8.0f, 62.0f, 0.38f, COL_DIM, line);
+	snprintf(line, sizeof(line), "TILE %03d %03d", f->cell_x, f->cell_z);
+	exo_text(8.0f, 80.0f, 0.38f, COL_DIM, line);
+	snprintf(line, sizeof(line), "DRAW %d  CUT %d", f->tiles_drawn, f->tiles_culled);
+	exo_text(8.0f, 96.0f, 0.38f, COL_DIM, line);
+
+	bar = vmax > 0.0f ? f->speed / vmax : 0.0f;
 	if (bar < 0.0f) bar = 0.0f;
 	if (bar > 1.0f) bar = 1.0f;
-	exo_bot_rect(8.0f, 132.0f, 304.0f, 10.0f, RGB32(30, 30, 40));
-	exo_bot_rect(8.0f, 132.0f, 304.0f * bar, 10.0f,
+	exo_bot_rect(8.0f, 114.0f, 196.0f, 8.0f, RGB32(30, 30, 40));
+	exo_bot_rect(8.0f, 114.0f, 196.0f * bar, 8.0f,
 	             f->mode == EXO_FLIGHT_HIGH ? RGB32(255, 90, 70)
 	                                       : RGB32(80, 180, 255));
+
+	draw_slider("REXXI VMAX", vmax_t, g_tune == 0, 8.0f, 132.0f, 196.0f);
+	snprintf(line, sizeof(line), "%4.0f", (double)f->rexxi_vmax);
+	exo_text(160.0f, 132.0f, 0.38f, COL_TEXT, line);
+	draw_slider("RENDER R", rend_t, g_tune == 1, 8.0f, 168.0f, 196.0f);
+	snprintf(line, sizeof(line), "%d", f->render_r);
+	exo_text(170.0f, 168.0f, 0.38f, COL_TEXT, line);
+
+	draw_pad_graph(f);
+
+	exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "A SPEED  B JUMP  X SISTER");
+	exo_text(8.0f, 214.0f, 0.32f, COL_DIM, "DPAD TUNE  TOUCH SLIDER");
+	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT RESET  START PAUSE");
+	if (g_paused)
+		exo_text(214.0f, 220.0f, 0.45f, COL_ACCENT, "PAUSED");
 }
 
 int main(void)
@@ -250,30 +446,34 @@ int main(void)
 	exo_flight_init(&g_flight, EXO_PILOT_SHIRAMMY);
 	try_load_etm();
 	load_gfx();
+	g_tune = 1;
 	while (exo_frame_begin()) {
 		const ExoInput *in = exo_input();
+		float dt = exo_dt();
+
+		g_fps = g_fps * 0.90f + (dt > 0.0001f ? (1.0f / dt) : 60.0f) * 0.10f;
+
 		if (exo_down(EXO_BTN_START))
 			g_paused = !g_paused;
 		if (exo_down(EXO_BTN_X)) {
 			exo_flight_set_pilot(&g_flight,
 				g_flight.pilot == EXO_PILOT_SHIRAMMY ? EXO_PILOT_REXXI : EXO_PILOT_SHIRAMMY);
 		}
+		apply_tune(&g_flight, in);
 		if (!g_paused)
-			exo_flight_tick(&g_flight, in, exo_dt());
+			exo_flight_tick(&g_flight, in, dt);
 		exo_render_begin();
 		exo_render_eye(EXO_EYE_LEFT, COL_SKY);
 		draw_layers(EXO_EYE_LEFT, &g_flight);
 		draw_floor(EXO_EYE_LEFT, &g_flight);
 		draw_pilot(&g_flight);
-		exo_top_text(200.0f, 8.0f, 0.45f, COL_TEXT,
-		             g_flight.mode == EXO_FLIGHT_HIGH ? "HIGH" : "LOW");
+		draw_top_overlay(&g_flight);
 		if (exo_slider_3d() > 0.05f) {
 			exo_render_eye(EXO_EYE_RIGHT, COL_SKY);
 			draw_layers(EXO_EYE_RIGHT, &g_flight);
 			draw_floor(EXO_EYE_RIGHT, &g_flight);
 			draw_pilot(&g_flight);
-			exo_top_text(200.0f, 8.0f, 0.45f, COL_TEXT,
-			             g_flight.mode == EXO_FLIGHT_HIGH ? "HIGH" : "LOW");
+			draw_top_overlay(&g_flight);
 		}
 		draw_hud(&g_flight);
 		exo_render_end();
