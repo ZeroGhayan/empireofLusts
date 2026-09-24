@@ -16,7 +16,7 @@
 #define EXO_FLIGHT_GRAV          90.0f
 #define EXO_FLIGHT_FOCAL         210.0f
 #define EXO_FLIGHT_REXXI_VMAX    200.0f
-#define EXO_FLIGHT_Y_MAX         180.0f
+#define EXO_FLIGHT_Y_MAX         1000.0f
 #define EXO_FLIGHT_HUD_SHI       1062.0f
 #define EXO_FLIGHT_HUD_REX       2.5f
 #define EXO_FLIGHT_CHARGE_SEC    1.60f
@@ -70,7 +70,6 @@ typedef struct ExoPilotStats {
 	const char *name;
 } ExoPilotStats;
 
-/* Arvore presa a uma celula do tilemap. */
 typedef struct ExoTree {
 	int   cx, cz;
 	float h;
