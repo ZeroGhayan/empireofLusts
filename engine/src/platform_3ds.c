@@ -3,6 +3,7 @@
 #include <3ds.h>
 #include <citro2d.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define STICK_MAX 154.0f
 #define DEAD      20
@@ -99,6 +100,7 @@ bool exo_frame_begin(void)
     g_in.touch_x     = g_touch.px;
 	g_in.touch_y     = g_touch.py;
 	g_in.touch_press = (hidKeysDown() & KEY_TOUCH) ? 1 : 0;
+	g_in.touch_held  = (hidKeysHeld() & KEY_TOUCH) ? 1 : 0;
 	if (g_new3ds)
 		hidCstickRead(&g_cstick);
 	else {
@@ -226,6 +228,29 @@ void exo_bot_rect(float x, float y, float w, float h, uint32_t rgba)
 	for (iy = y0; iy < y1; ++iy)
 		for (ix = x0; ix < x1; ++ix)
 			bot_px(ix, iy, r, g, b);
+}
+
+void exo_bot_line(float x0, float y0, float x1, float y1, uint32_t rgba)
+{
+	int ix0 = (int)x0, iy0 = (int)y0;
+	int ix1 = (int)x1, iy1 = (int)y1;
+	int dx = abs(ix1 - ix0), sx = ix0 < ix1 ? 1 : -1;
+	int dy = -abs(iy1 - iy0), sy = iy0 < iy1 ? 1 : -1;
+	int err = dx + dy;
+	u8 r, g, b;
+
+	unpack(rgba, &r, &g, &b);
+	for (;;) {
+		int e2;
+		bot_px(ix0, iy0, r, g, b);
+		bot_px(ix0 + 1, iy0, r, g, b);
+		bot_px(ix0, iy0 + 1, r, g, b);
+		if (ix0 == ix1 && iy0 == iy1)
+			break;
+		e2 = 2 * err;
+		if (e2 >= dy) { err += dy; ix0 += sx; }
+		if (e2 <= dx) { err += dx; iy0 += sy; }
+	}
 }
 
 static const uint8_t FONT[59][7] = {
