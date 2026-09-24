@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Fundos placeholder + sprites das irmas.
-
-Ordem:
-  1. platforms/3ds/gfx/pilot_src/{Shirammy,Rexxi}/{idle,low,high,flight}.png
-  2. platforms/3ds/gfx/b64/{Shirammy,Rexxi}_*.b64
-  3. silhueta na proporcao certa (32x48 / 48x32)
-"""
-import base64
+"""Fundos, sprites das irmas e atlas de tiles SS4/DP1."""
 import os
 import shutil
 import struct
@@ -14,6 +7,7 @@ import zlib
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(DIR, "pilot_src")
+ROM = os.path.join(DIR, "..", "romfs", "flight")
 
 FRAMES = ("idle", "low", "high", "flight")
 WHO = ("Shirammy", "Rexxi")
@@ -101,6 +95,7 @@ def silhouette(who, frame):
 
 
 def install_pilots():
+    import base64
     for who in WHO:
         for fr in FRAMES:
             dest = os.path.join(DIR, "%s_%s.png" % (who.lower(), fr))
@@ -121,6 +116,45 @@ def install_pilots():
             png(dest, w, h, pix)
 
 
+def slice_tileset(src_png, stem):
+    try:
+        from PIL import Image
+    except ImportError:
+        print("mk_flight: Pillow ausente, tileset %s ignorado" % stem)
+        return
+    if not os.path.isfile(src_png):
+        print("mk_flight: sem %s" % src_png)
+        return
+    im = Image.open(src_png).convert("RGBA")
+    w, h = im.size
+    out = os.path.join(DIR, "_" + stem)
+    if os.path.isdir(out):
+        shutil.rmtree(out)
+    os.makedirs(out)
+    frames = []
+    i = 0
+    for y in range(0, h, 32):
+        for x in range(0, w, 32):
+            tile = im.crop((x, y, min(x + 32, w), min(y + 32, h)))
+            if tile.size != (32, 32):
+                canvas = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+                canvas.paste(tile, (0, 0))
+                tile = canvas
+            fn = "%03d.png" % i
+            tile.save(os.path.join(out, fn))
+            frames.append("_%s/%s" % (stem, fn))
+            i += 1
+    if frames:
+        t3s(stem + ".t3s", frames, "rgb565")
+        print("mk_flight: %s %d tiles" % (stem, len(frames)))
+
+
+def install_course_tiles():
+    for stem, folder in (("ss4_tiles", "ss4"), ("dp1_tiles", "dp1")):
+        src = os.path.join(ROM, folder, "tiles.png")
+        slice_tileset(src, stem)
+
+
 def main():
     for name, w, h, pix in (
         ("bg0.png",) + layer0(),
@@ -129,6 +163,7 @@ def main():
     ):
         write_if_absent(os.path.join(DIR, name), w, h, pix)
     install_pilots()
+    install_course_tiles()
     t3s("bg0.t3s", ["bg0.png"])
     t3s("bg1.t3s", ["bg1.png"])
     t3s("bg2.t3s", ["bg2.png"])
