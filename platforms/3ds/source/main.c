@@ -41,6 +41,9 @@ static ExoFlight g_flight;
 static C2D_SpriteSheet g_bg[3];
 static C2D_SpriteSheet g_shi;
 static C2D_SpriteSheet g_rex;
+static C2D_SpriteSheet g_tiles;
+static int g_tile_n;
+static int g_vis_cx[720], g_vis_cz[720], g_vis_n;
 static bool g_have_bg[3];
 static bool g_paused;
 static int g_menu = 1;
@@ -51,6 +54,21 @@ static u32 tile_color(uint16_t id)
 {
 	unsigned n = (unsigned)(sizeof(TILE_COL) / sizeof(TILE_COL[0]));
 	return TILE_COL[id % n];
+}
+
+static void load_tileset(ExoCourse c)
+{
+	if (g_tiles) {
+		C2D_SpriteSheetFree(g_tiles);
+		g_tiles = NULL;
+	}
+	g_tile_n = 0;
+	if (c == EXO_COURSE_SS4)
+		g_tiles = C2D_SpriteSheetLoad("romfs:/gfx/ss4_tiles.t3x");
+	else if (c == EXO_COURSE_DP1)
+		g_tiles = C2D_SpriteSheetLoad("romfs:/gfx/dp1_tiles.t3x");
+	if (g_tiles)
+		g_tile_n = (int)C2D_SpriteSheetCount(g_tiles);
 }
 
 static int load_etm_file(const char *path, ExoCourse course)
@@ -90,6 +108,7 @@ static void start_course(ExoCourse c)
 		load_etm_file("romfs:/flight/dp1/map.etm", EXO_COURSE_DP1);
 	else
 		exo_flight_load_map(&g_flight, EXO_COURSE_DEMO, NULL, 0);
+	load_tileset(c);
 }
 
 static void load_gfx(void)
@@ -139,10 +158,37 @@ static void draw_layers(ExoEye eye, const ExoFlight *f)
 static void draw_poly(const float *s, const float *t, int n, u32 col)
 {
 	int k;
-	if (n < 3)
-		return;
+	if (n < 3) return;
 	for (k = 1; k < n - 1; ++k)
 		C2D_DrawTriangle(s[0], t[0], col, s[k], t[k], col, s[k + 1], t[k + 1], col, 0.3f);
+}
+
+static void stamp_tile(uint16_t id, const float *sx, const float *sy, int n)
+{
+	C2D_Image img;
+	C2D_DrawParams par;
+	float minx = 9999.0f, maxx = -9999.0f, miny = 9999.0f, maxy = -9999.0f;
+	int i;
+
+	if (!g_tiles || g_tile_n <= 0 || n < 3)
+		return;
+	img = C2D_SpriteSheetGetImage(g_tiles, (int)id % g_tile_n);
+	if (!img.subtex)
+		return;
+	for (i = 0; i < n; ++i) {
+		if (sx[i] < minx) minx = sx[i];
+		if (sx[i] > maxx) maxx = sx[i];
+		if (sy[i] < miny) miny = sy[i];
+		if (sy[i] > maxy) maxy = sy[i];
+	}
+	if (maxx - minx < 2.0f || maxy - miny < 2.0f)
+		return;
+	par.pos.x = minx; par.pos.y = miny;
+	par.pos.w = maxx - minx; par.pos.h = maxy - miny;
+	par.center.x = 0.0f; par.center.y = 0.0f;
+	par.depth = 0.31f;
+	par.angle = 0.0f;
+	C2D_DrawImage(img, &par, NULL);
 }
 
 static int quad_sane(const float *sx, const float *sy, int n, float horizon)
@@ -176,6 +222,7 @@ static int emit_tile(ExoFlight *f, float ox, int tx, int tz,
 	float sx[6], sy[6];
 	int nv = 0;
 	float wx, wz, lz;
+	uint16_t id;
 
 	if (*drawn >= cap)
 		return 0;
@@ -197,9 +244,25 @@ static int emit_tile(ExoFlight *f, float ox, int tx, int tz,
 		(*culled)++;
 		return 1;
 	}
-	draw_poly(sx, sy, nv, tile_color(exo_tilemap_at(&f->map, tx, tz)));
+	id = exo_tilemap_at(&f->map, tx, tz);
+	draw_poly(sx, sy, nv, tile_color(id));
+	stamp_tile(id, sx, sy, nv);
+	if (g_vis_n < 720) {
+		g_vis_cx[g_vis_n] = tx;
+		g_vis_cz[g_vis_n] = tz;
+		g_vis_n++;
+	}
 	(*drawn)++;
 	return 1;
+}
+
+static int cell_drawn(int cx, int cz)
+{
+	int i;
+	for (i = 0; i < g_vis_n; ++i)
+		if (g_vis_cx[i] == cx && g_vis_cz[i] == cz)
+			return 1;
+	return 0;
 }
 
 static void draw_floor(ExoEye eye, ExoFlight *f)
@@ -210,6 +273,7 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	int cap = f->draw_cap;
 	float far_z;
 
+	g_vis_n = 0;
 	if (R < EXO_FLIGHT_RENDER_MIN) R = EXO_FLIGHT_RENDER_MIN;
 	if (R > EXO_FLIGHT_RENDER_MAX) R = EXO_FLIGHT_RENDER_MAX;
 	if (cap < 40) cap = 40;
@@ -244,10 +308,11 @@ static void draw_trees(const ExoFlight *f)
 	int i;
 
 	for (i = 0; i < f->tree_n; ++i) {
-		float wx = ((float)f->trees[i].cx + 0.5f) * EXO_FLIGHT_CELL;
-		float wz = ((float)f->trees[i].cz + 0.5f) * EXO_FLIGHT_CELL;
-		float bx, by, tx, ty, tw;
-
+		float wx, wz, bx, by, tx, ty, tw;
+		if (!cell_drawn(f->trees[i].cx, f->trees[i].cz))
+			continue;
+		wx = ((float)f->trees[i].cx + 0.5f) * EXO_FLIGHT_CELL;
+		wz = ((float)f->trees[i].cz + 0.5f) * EXO_FLIGHT_CELL;
 		if (!exo_flight_project3(f, wx, 0.0f, wz, 0.0f, &bx, &by))
 			continue;
 		if (by < f->horizon - 2.0f)
@@ -374,9 +439,9 @@ static void draw_pad_graph(const ExoFlight *f)
 	exo_bot_line(cx, cy, cx + hx, cy + hz, COL_HEAD);
 	exo_bot_line(cx, cy, cx + mx, cy + mz, COL_SLIDE);
 	exo_bot_line(cx, cy, cx + pdx, cy + pdy, COL_PAD);
-	exo_text(x0, y0 + s + 2.0f, 0.35f, COL_PAD, "PAD");
-	exo_text(x0 + 28.0f, y0 + s + 2.0f, 0.35f, COL_HEAD, "YAW");
-	exo_text(x0 + 56.0f, y0 + s + 2.0f, 0.35f, COL_SLIDE, "MOV");
+	exo_text(x0, y0 + s + 2.0f, 0.28f, COL_PAD, "PAD");
+	exo_text(x0 + 28.0f, y0 + s + 2.0f, 0.28f, COL_HEAD, "YAW");
+	exo_text(x0 + 56.0f, y0 + s + 2.0f, 0.28f, COL_SLIDE, "MOV");
 }
 
 static void draw_slider(const char *label, float t, int selected,
@@ -386,9 +451,9 @@ static void draw_slider(const char *label, float t, int selected,
 	u32 fill = selected ? COL_SLIDE : RGB32(80, 100, 130);
 	if (t < 0.0f) t = 0.0f;
 	if (t > 1.0f) t = 1.0f;
-	exo_text(x, y, 0.38f, selected ? COL_ACCENT : COL_DIM, label);
-	exo_bot_rect(x, y + 12.0f, w, 8.0f, bar);
-	exo_bot_rect(x, y + 12.0f, w * t, 8.0f, fill);
+	exo_text(x, y, 0.28f, selected ? COL_ACCENT : COL_DIM, label);
+	exo_bot_rect(x, y + 10.0f, w, 6.0f, bar);
+	exo_bot_rect(x, y + 10.0f, w * t, 6.0f, fill);
 }
 
 static int touch_in(const ExoInput *in, float x, float y, float w, float h)
@@ -424,14 +489,14 @@ static void draw_menu(void)
 {
 	exo_render_bottom(COL_BOT);
 	exo_text_begin();
-	exo_text(8.0f, 12.0f, 0.52f, COL_ACCENT, "EMPIRE OF LUSTS");
-	exo_text(8.0f, 36.0f, 0.40f, COL_TEXT, "SELECT COURSE");
-	exo_text(8.0f, 70.0f, 0.42f, g_pick == 0 ? COL_ACCENT : COL_DIM, "  SS4  SONIC CD");
-	exo_text(8.0f, 92.0f, 0.42f, g_pick == 1 ? COL_ACCENT : COL_DIM, "  DP1  DONUT PLAINS");
-	exo_text(8.0f, 130.0f, 0.36f, COL_DIM, "SS4  3 PURPLE  1 REAL");
-	exo_text(8.0f, 148.0f, 0.36f, COL_DIM, "DP1  3 LAPS");
-	exo_text(8.0f, 180.0f, 0.36f, COL_TEXT, "UP/DOWN  A START");
-	exo_text(8.0f, 198.0f, 0.36f, COL_DIM, "COPY maps to romfs/flight/");
+	exo_text(8.0f, 8.0f, 0.32f, COL_ACCENT, "EMPIRE OF LUSTS");
+	exo_text(8.0f, 24.0f, 0.28f, COL_TEXT, "SELECT COURSE");
+	exo_text(8.0f, 48.0f, 0.28f, g_pick == 0 ? COL_ACCENT : COL_DIM, "  SS4  SONIC CD");
+	exo_text(8.0f, 62.0f, 0.28f, g_pick == 1 ? COL_ACCENT : COL_DIM, "  DP1  DONUT PLAINS");
+	exo_text(8.0f, 90.0f, 0.28f, COL_DIM, "SS4  3 PURPLE  1 REAL");
+	exo_text(8.0f, 104.0f, 0.28f, COL_DIM, "DP1  3 LAPS");
+	exo_text(8.0f, 130.0f, 0.28f, COL_TEXT, "UP/DOWN  A START");
+	exo_text(8.0f, 146.0f, 0.28f, COL_DIM, "NEED tiles.png IN romfs/flight/");
 }
 
 static void draw_hud(const ExoFlight *f)
@@ -446,51 +511,49 @@ static void draw_hud(const ExoFlight *f)
 
 	exo_render_bottom(COL_BOT);
 	exo_text_begin();
-	exo_text(8.0f, 8.0f, 0.48f, COL_ACCENT, "EMPIRE OF LUSTS");
-	snprintf(line, sizeof(line), "%s  %s", s->name,
-	         f->mode == EXO_FLIGHT_HIGH ? "HIGH F-ZERO" : "LOW  3D");
-	exo_text(8.0f, 26.0f, 0.42f, COL_TEXT, line);
+	exo_text(8.0f, 4.0f, 0.32f, COL_ACCENT, "EMPIRE OF LUSTS");
+	snprintf(line, sizeof(line), "%s %s", s->name,
+	         f->mode == EXO_FLIGHT_HIGH ? "HIGH" : "LOW");
+	exo_text(8.0f, 16.0f, 0.28f, COL_TEXT, line);
 	if (f->pilot == EXO_PILOT_REXXI)
 		snprintf(line, sizeof(line), "SPD %4.2f %s", (double)hud, s->hud_unit);
 	else
 		snprintf(line, sizeof(line), "SPD %4.0f %s", (double)hud, s->hud_unit);
-	exo_text(8.0f, 44.0f, 0.42f, COL_TEXT, line);
-	snprintf(line, sizeof(line), "REAL %5.1f  P %.2f", (double)f->speed, (double)f->pitch);
-	exo_text(8.0f, 62.0f, 0.38f, COL_DIM, line);
-	snprintf(line, sizeof(line), "TILE %03d %03d", f->cell_x, f->cell_z);
-	exo_text(8.0f, 80.0f, 0.38f, COL_DIM, line);
+	exo_text(8.0f, 28.0f, 0.28f, COL_TEXT, line);
+	snprintf(line, sizeof(line), "REAL %.1f P %.2f", (double)f->speed, (double)f->pitch);
+	exo_text(8.0f, 40.0f, 0.28f, COL_DIM, line);
+	snprintf(line, sizeof(line), "TILE %03d %03d  TS %d", f->cell_x, f->cell_z, g_tile_n);
+	exo_text(8.0f, 52.0f, 0.28f, COL_DIM, line);
 	snprintf(line, sizeof(line), "DRAW %d/%d", f->tiles_drawn, f->draw_cap);
-	exo_text(8.0f, 96.0f, 0.38f, COL_DIM, line);
+	exo_text(8.0f, 64.0f, 0.28f, COL_DIM, line);
 
 	bar = hud_max > 0.0f ? hud / hud_max : 0.0f;
 	if (bar < 0.0f) bar = 0.0f;
 	if (bar > 1.0f) bar = 1.0f;
-	exo_bot_rect(8.0f, 114.0f, 196.0f, 8.0f, RGB32(30, 30, 40));
-	exo_bot_rect(8.0f, 114.0f, 196.0f * bar, 8.0f,
+	exo_bot_rect(8.0f, 76.0f, 196.0f, 6.0f, RGB32(30, 30, 40));
+	exo_bot_rect(8.0f, 76.0f, 196.0f * bar, 6.0f,
 	             f->charge_armed ? COL_RED : COL_BLUE);
 
-	exo_text(8.0f, 128.0f, 0.38f, COL_ACCENT, "CAM");
-	exo_text(50.0f, 128.0f, 0.38f, COL_TEXT,
+	exo_text(8.0f, 86.0f, 0.28f, COL_ACCENT, "CAM");
+	exo_text(40.0f, 86.0f, 0.28f, COL_TEXT,
 	         f->cam_ref == EXO_CAM_SURFACE ? "SURFACE" : "PILOT");
 
 	if (f->course == EXO_COURSE_DP1)
-		snprintf(line, sizeof(line), "LAP %d/3  T %.2f", f->laps, (double)f->run_t);
+		snprintf(line, sizeof(line), "LAP %d/3 T %.2f", f->laps, (double)f->run_t);
 	else if (f->course == EXO_COURSE_SS4)
-		snprintf(line, sizeof(line), "FIND REAL PAD  T %.2f", (double)f->run_t);
+		snprintf(line, sizeof(line), "FIND PAD T %.2f", (double)f->run_t);
 	else
 		snprintf(line, sizeof(line), "T %.2f BEST %.2f", (double)f->run_t, (double)f->best_t);
-	exo_text(8.0f, 144.0f, 0.36f, COL_ACCENT, line);
+	exo_text(8.0f, 98.0f, 0.28f, COL_ACCENT, line);
 
 	draw_slider("RENDER R", rend_t, 1, 8.0f, 168.0f, 196.0f);
 	draw_pad_graph(f);
 
-	if (f->mode == EXO_FLIGHT_HIGH)
-		exo_text(8.0f, 200.0f, 0.30f, COL_DIM, "Y SPEED  A BRAKE  B TOFF  L/R STRAFE");
-	else
-		exo_text(8.0f, 200.0f, 0.30f, COL_DIM, "PAD LOOK  L/R STRAFE  Y SPEED");
-	exo_text(8.0f, 214.0f, 0.30f, COL_DIM, "ZR CAM  SELECT RESET  START PAUSE");
+	exo_text(8.0f, 200.0f, 0.28f, COL_DIM,
+	         f->mode == EXO_FLIGHT_HIGH ? "Y SPEED A BRAKE B TOFF L/R STR" : "PAD LOOK L/R STR Y SPEED");
+	exo_text(8.0f, 212.0f, 0.28f, COL_DIM, "ZR CAM  SELECT RESET  START PAUSE");
 	if (g_paused)
-		exo_text(214.0f, 220.0f, 0.45f, COL_ACCENT, "PAUSED");
+		exo_text(214.0f, 220.0f, 0.32f, COL_ACCENT, "PAUSED");
 }
 
 static void draw_world(ExoEye eye)
@@ -548,6 +611,7 @@ int main(void)
 		exo_render_end();
 		exo_frame_end();
 	}
+	if (g_tiles) C2D_SpriteSheetFree(g_tiles);
 	if (g_shi) C2D_SpriteSheetFree(g_shi);
 	if (g_rex) C2D_SpriteSheetFree(g_rex);
 	if (g_bg[0]) C2D_SpriteSheetFree(g_bg[0]);
