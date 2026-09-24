@@ -10,7 +10,7 @@ TOPDIR ?= $(CURDIR)
 include $(DEVKITARM)/3ds_rules
 
 #---------------------------------------------------------------------------------
-TARGET		:=	$(notdir $(CURDIR))
+TARGET		:=	eol
 BUILD		:=	build
 SOURCES		:=	source ../../engine/src
 DATA		:=	data
@@ -127,7 +127,7 @@ all:
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf \
+	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf 3ds.3dsx 3ds.elf 3ds.smdh \
 		$(GFXBUILD) $(CURDIR)/gfx/p1_idle0.png $(CURDIR)/gfx/p1_idle1.png
 
 #---------------------------------------------------------------------------------
