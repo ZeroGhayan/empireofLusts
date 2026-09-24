@@ -20,6 +20,9 @@
 #define COL_PAD    RGB32(80, 200, 255)
 #define COL_HEAD   RGB32(255, 210, 64)
 #define COL_SLIDE  RGB32(70, 200, 120)
+#define COL_TRUNK  RGB32(92, 58, 28)
+#define COL_LEAF   RGB32(36, 130, 52)
+#define COL_LEAF2  RGB32(22, 90, 38)
 
 static const u32 TILE_COL[] = {
 	RGB32( 46, 110,  58),
@@ -27,7 +30,7 @@ static const u32 TILE_COL[] = {
 	RGB32( 58,  62,  74),
 	RGB32(210, 200,  70),
 	RGB32( 90,  86,  70),
-	RGB32( 40,  90, 140),
+	RGB32(150,  48, 190),
 	RGB32(220,  36,  36),
 	RGB32( 80, 160,  90)
 };
@@ -226,6 +229,45 @@ done:
 	f->tiles_culled = culled;
 }
 
+static void draw_trees(const ExoFlight *f)
+{
+	int i, pass;
+
+	/* far-to-near aproximado: duas passagens por distancia bruta */
+	for (pass = 1; pass >= 0; --pass) {
+		for (i = 0; i < f->tree_n; ++i) {
+			float bx, by, tx, ty, tw;
+			float dx = f->trees[i].x - f->cam_x;
+			float dz = f->trees[i].z - f->cam_z;
+			float d2 = dx * dx + dz * dz;
+			int far = d2 > (90.0f * 90.0f);
+			if (far != pass)
+				continue;
+			if (!exo_flight_project3(f, f->trees[i].x, 0.0f, f->trees[i].z,
+			                         0.0f, &bx, &by))
+				continue;
+			if (!exo_flight_project3(f, f->trees[i].x, f->trees[i].h,
+			                         f->trees[i].z, 0.0f, &tx, &ty))
+				continue;
+			if (by < ty) {
+				float tmp = by; by = ty; ty = tmp;
+			}
+			tw = (by - ty) * 0.28f;
+			if (tw < 3.0f) tw = 3.0f;
+			if (bx < -40.0f || bx > 440.0f || by < -20.0f || ty > 250.0f)
+				continue;
+			C2D_DrawRectSolid(bx - tw * 0.18f, ty + (by - ty) * 0.45f, 0.38f,
+			                  tw * 0.36f, (by - ty) * 0.55f, COL_TRUNK);
+			C2D_DrawTriangle(bx, ty, COL_LEAF,
+			                 bx - tw, ty + (by - ty) * 0.62f, COL_LEAF2,
+			                 bx + tw, ty + (by - ty) * 0.62f, COL_LEAF, 0.39f);
+			C2D_DrawTriangle(bx, ty + (by - ty) * 0.18f, COL_LEAF2,
+			                 bx - tw * 0.75f, ty + (by - ty) * 0.58f, COL_LEAF,
+			                 bx + tw * 0.75f, ty + (by - ty) * 0.58f, COL_LEAF, 0.40f);
+		}
+	}
+}
+
 static int pilot_frame(const ExoFlight *f)
 {
 	if (f->y > 2.5f)
@@ -262,7 +304,7 @@ static void draw_pilot(const ExoFlight *f)
 
 	if (!exo_flight_project(f, f->x, f->z, 0.0f, &px, &py)) {
 		px = 200.0f;
-		py = EXO_FLIGHT_PIN_Y;
+		py = EXO_FLIGHT_PIN_FLY;
 	}
 	if (py > 228.0f) py = 228.0f;
 	if (py < 36.0f) py = 36.0f;
@@ -300,7 +342,7 @@ static void draw_speed_veil(const ExoFlight *f)
 static void draw_charge_bar(const ExoFlight *f)
 {
 	float w = 72.0f * f->charge;
-	u32 fill = (f->mode == EXO_FLIGHT_HIGH) ? RGB32(255, 90, 70) : RGB32(80, 200, 255);
+	u32 fill = (f->charge > 0.02f) ? RGB32(80, 200, 255) : RGB32(40, 44, 58);
 
 	C2D_DrawRectSolid(8.0f, 224.0f, 0.62f, 74.0f, 8.0f, RGB32(20, 22, 32));
 	if (w > 0.5f)
@@ -317,6 +359,14 @@ static void draw_top_overlay(const ExoFlight *f)
 	exo_top_text(360.0f, 8.0f, 0.42f, COL_ACCENT, line);
 	snprintf(line, sizeof(line), "H %.1f", (double)f->y);
 	exo_top_text(360.0f, 220.0f, 0.42f, COL_TEXT, line);
+	if (f->run == EXO_RUN_DONE)
+		snprintf(line, sizeof(line), "LAND %.2f", (double)f->run_t);
+	else if (f->run == EXO_RUN_GO)
+		snprintf(line, sizeof(line), "T %.2f", (double)f->run_t);
+	else
+		snprintf(line, sizeof(line), "GO PAD");
+	exo_top_text(200.0f, 220.0f, 0.42f,
+	             f->run == EXO_RUN_DONE ? COL_ACCENT : COL_TEXT, line);
 }
 
 static void draw_pad_graph(const ExoFlight *f)
@@ -397,8 +447,10 @@ static void apply_tune(ExoFlight *f, const ExoInput *in)
 			f->render_r = EXO_FLIGHT_RENDER_MAX;
 	}
 
-	if (exo_down(EXO_BTN_SELECT))
+	if (exo_down(EXO_BTN_SELECT)) {
 		f->render_r = EXO_FLIGHT_RENDER;
+		exo_flight_reset_run(f);
+	}
 }
 
 static void draw_hud(const ExoFlight *f)
@@ -440,9 +492,20 @@ static void draw_hud(const ExoFlight *f)
 	             f->mode == EXO_FLIGHT_HIGH ? RGB32(255, 90, 70)
 	                                       : RGB32(80, 180, 255));
 
-	exo_text(8.0f, 132.0f, 0.38f, COL_ACCENT, "CAM REF");
-	exo_text(8.0f, 146.0f, 0.38f, COL_TEXT,
+	exo_text(8.0f, 128.0f, 0.38f, COL_ACCENT, "CAM REF");
+	exo_text(90.0f, 128.0f, 0.38f, COL_TEXT,
 	         f->cam_ref == EXO_CAM_SURFACE ? "SURFACE" : "PILOT");
+
+	if (f->run == EXO_RUN_DONE)
+		snprintf(line, sizeof(line), "LAND %.2f BEST %.2f", (double)f->run_t,
+		         (double)f->best_t);
+	else if (f->run == EXO_RUN_GO)
+		snprintf(line, sizeof(line), "TIME %.2f BEST %.2f", (double)f->run_t,
+		         f->best_t > 0.0f ? (double)f->best_t : 0.0);
+	else
+		snprintf(line, sizeof(line), "GOAL PURPLE PAD");
+	exo_text(8.0f, 144.0f, 0.38f, COL_ACCENT, line);
+
 	draw_slider("RENDER R", rend_t, 1, 8.0f, 168.0f, 196.0f);
 	snprintf(line, sizeof(line), "%d", f->render_r);
 	exo_text(170.0f, 168.0f, 0.38f, COL_TEXT, line);
@@ -454,7 +517,7 @@ static void draw_hud(const ExoFlight *f)
 	else
 		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "Y SPEED  B JUMP  X SISTER");
 	exo_text(8.0f, 214.0f, 0.32f, COL_DIM, "ZR CAM  DPAD R  TOUCH REF");
-	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT R18  START PAUSE");
+	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT RESET  START PAUSE");
 	if (g_paused)
 		exo_text(214.0f, 220.0f, 0.45f, COL_ACCENT, "PAUSED");
 }
@@ -485,6 +548,7 @@ int main(void)
 		exo_render_eye(EXO_EYE_LEFT, COL_SKY);
 		draw_layers(EXO_EYE_LEFT, &g_flight);
 		draw_floor(EXO_EYE_LEFT, &g_flight);
+		draw_trees(&g_flight);
 		draw_pilot(&g_flight);
 		draw_speed_veil(&g_flight);
 		draw_charge_bar(&g_flight);
@@ -493,6 +557,7 @@ int main(void)
 			exo_render_eye(EXO_EYE_RIGHT, COL_SKY);
 			draw_layers(EXO_EYE_RIGHT, &g_flight);
 			draw_floor(EXO_EYE_RIGHT, &g_flight);
+			draw_trees(&g_flight);
 			draw_pilot(&g_flight);
 			draw_speed_veil(&g_flight);
 			draw_charge_bar(&g_flight);
