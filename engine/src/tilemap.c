@@ -39,6 +39,11 @@ bool exo_tilemap_spring(const ExoTilemap *m, int x, int y)
 	return exo_tilemap_at(m, x, y) == EXO_TILE_SPRING;
 }
 
+bool exo_tilemap_pad(const ExoTilemap *m, int x, int y)
+{
+	return exo_tilemap_at(m, x, y) == EXO_TILE_PAD;
+}
+
 void exo_tilemap_place_springs(ExoTilemap *m)
 {
 	int mid;
@@ -57,6 +62,26 @@ void exo_tilemap_place_springs(ExoTilemap *m)
 		int z = spots[i][1];
 		if (x > 0 && z > 0 && x < (int)m->w - 1 && z < (int)m->h - 1)
 			m->cells[z * m->w + x] = EXO_TILE_SPRING;
+	}
+	if (m->tile_count < 7)
+		m->tile_count = 7;
+}
+
+void exo_tilemap_place_pad(ExoTilemap *m)
+{
+	int mid, x, z, dx, dz;
+
+	if (!m || m->w < 20 || m->h < 20)
+		return;
+	mid = (int)m->w / 2;
+	/* pad 2x2 roxo a norte da cruz, fim do percurso */
+	for (dz = 0; dz < 2; ++dz) {
+		for (dx = 0; dx < 2; ++dx) {
+			x = mid + dx;
+			z = mid + 18 + dz;
+			if (x > 0 && z > 0 && x < (int)m->w - 1 && z < (int)m->h - 1)
+				m->cells[z * m->w + x] = EXO_TILE_PAD;
+		}
 	}
 	if (m->tile_count < 7)
 		m->tile_count = 7;
@@ -93,6 +118,7 @@ void exo_tilemap_demo(ExoTilemap *m)
 		}
 	}
 	exo_tilemap_place_springs(m);
+	exo_tilemap_place_pad(m);
 }
 
 bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
@@ -136,5 +162,6 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 	}
 	m->loaded = true;
 	exo_tilemap_place_springs(m);
+	exo_tilemap_place_pad(m);
 	return true;
 }
