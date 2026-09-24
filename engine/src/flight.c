@@ -9,7 +9,7 @@ static const ExoPilotStats STATS[2] = {
 		.hud_max = EXO_FLIGHT_HUD_SHI, .hud_unit = "Gm/h", .name = "Shirammy"
 	},
 	{
-		.vmax = 72.0f, .walk = 12.0f, .accel = 28.0f, .coast = 26.0f,
+		.vmax = 200.0f, .walk = 12.0f, .accel = 32.0f, .coast = 36.0f,
 		.turn_low = 2.5f, .turn_high = 2.15f, .jump = 40.0f, .climb = 50.0f,
 		.hud_max = EXO_FLIGHT_HUD_REX, .hud_unit = "Mm/h", .name = "Rexxi"
 	}
@@ -31,8 +31,6 @@ static float clampf(float v, float lo, float hi)
 
 float exo_flight_vmax(const ExoFlight *f)
 {
-	if (f->pilot == EXO_PILOT_REXXI)
-		return f->rexxi_vmax;
 	return exo_pilot_stats(f->pilot)->vmax;
 }
 
@@ -42,6 +40,7 @@ void exo_flight_init(ExoFlight *f, ExoPilot pilot)
 	exo_tilemap_demo(&f->map);
 	f->pilot = pilot;
 	f->mode = EXO_FLIGHT_LOW;
+	f->cam_ref = EXO_CAM_SURFACE;
 	f->x = (EXO_TILEMAP_MAX * 0.5f) * EXO_FLIGHT_CELL;
 	f->z = (EXO_TILEMAP_MAX * 0.5f - 8.0f) * EXO_FLIGHT_CELL;
 	f->grounded = 1;
@@ -51,7 +50,6 @@ void exo_flight_init(ExoFlight *f, ExoPilot pilot)
 	f->focal = EXO_FLIGHT_FOCAL;
 	f->render_r = EXO_FLIGHT_RENDER;
 	f->draw_cap = 48 + EXO_FLIGHT_RENDER * EXO_FLIGHT_RENDER;
-	f->rexxi_vmax = EXO_FLIGHT_REXXI_VMAX;
 }
 
 void exo_flight_set_pilot(ExoFlight *f, ExoPilot pilot)
@@ -59,6 +57,8 @@ void exo_flight_set_pilot(ExoFlight *f, ExoPilot pilot)
 	f->pilot = pilot;
 	if (f->speed > exo_flight_vmax(f))
 		f->speed = exo_flight_vmax(f);
+	if (f->cruise > exo_flight_vmax(f))
+		f->cruise = exo_flight_vmax(f);
 }
 
 static bool blocked(const ExoFlight *f, float x, float z)
@@ -85,14 +85,17 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	float sx = in ? in->stick_x : 0.0f;
 	float sy = in ? in->stick_y : 0.0f;
 	int hold_a = in && (in->held & EXO_BTN_A);
+	int hold_y = in && (in->held & EXO_BTN_Y);
 	int tap_b = in && (in->down & EXO_BTN_B);
+	int tap_zr = in && (in->down & EXO_BTN_ZR);
 	float nx, nz, step, cap, turn = 0.0f;
 	float vmax = exo_flight_vmax(f);
 	float fwd_x = sinf(f->yaw);
 	float fwd_z = cosf(f->yaw);
 	float rgt_x =  cosf(f->yaw);
 	float rgt_z = -sinf(f->yaw);
-	float frac;
+	int air;
+	int hold_accel, hold_brake;
 
 	if (dt <= 0.0f || dt > 0.05f)
 		dt = 1.0f / 60.0f;
@@ -103,21 +106,55 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	if (f->draw_cap > 720)
 		f->draw_cap = 720;
 
+	if (tap_zr)
+		f->cam_ref = (f->cam_ref == EXO_CAM_SURFACE) ? EXO_CAM_PILOT : EXO_CAM_SURFACE;
+
 	if (in) {
 		if (in->held & EXO_BTN_L) turn += 1.0f;
 		if (in->held & EXO_BTN_R) turn -= 1.0f;
 		turn -= in->cstick_x;
 	}
 
-	if (f->mode == EXO_FLIGHT_HIGH) {
-		f->yaw += (-sx) * s->turn_high * dt;
+	air = !f->grounded;
+	f->flying = air;
+
+	if (f->mode == EXO_FLIGHT_HIGH || air) {
+		hold_accel = hold_y;
+		hold_brake = hold_a;
+	} else {
+		hold_accel = hold_a;
+		hold_brake = 0;
+	}
+
+	if (hold_accel)
+		f->charge += dt / EXO_FLIGHT_CHARGE_SEC;
+	else
+		f->charge -= dt / 0.45f;
+	f->charge = clampf(f->charge, 0.0f, 1.0f);
+
+	if (f->mode == EXO_FLIGHT_HIGH || air) {
+		f->yaw += sx * s->turn_high * dt;
 		fwd_x = sinf(f->yaw);
 		fwd_z = cosf(f->yaw);
-		if (hold_a)
-			f->speed += s->accel * dt;
-		else
-			f->speed -= s->coast * dt;
-		f->speed = clampf(f->speed, 0.0f, vmax);
+
+		if (f->mode == EXO_FLIGHT_HIGH) {
+			if (hold_accel)
+				f->cruise += s->accel * dt;
+			else if (hold_brake)
+				f->cruise -= s->coast * 1.6f * dt;
+			f->cruise = clampf(f->cruise, 0.0f, vmax);
+			f->speed = f->cruise;
+		} else {
+			cap = hold_accel ? vmax : s->walk;
+			if (hold_accel) {
+				if (f->speed < cap)
+					f->speed += s->accel * dt;
+			} else {
+				f->speed -= s->coast * dt;
+			}
+			f->speed = clampf(f->speed, 0.0f, cap);
+		}
+
 		step = f->speed * dt;
 		if (step > EXO_FLIGHT_CELL * 0.45f)
 			step = EXO_FLIGHT_CELL * 0.45f;
@@ -126,11 +163,10 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		f->wish_x = fwd_x;
 		f->wish_z = fwd_z;
 
-		/* HIGH: pad como aviao. Cima no pad (sy+) desce, baixo sobe. */
 		{
 			float want = (-sy) * s->climb;
 			if (fabsf(sy) < 0.12f)
-				want = f->grounded ? 0.0f : -12.0f;
+				want = f->grounded ? 0.0f : -10.0f;
 			f->vy += (want - f->vy) * clampf(dt * 8.0f, 0.0f, 1.0f);
 		}
 	} else {
@@ -152,7 +188,7 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		}
 		f->wish_x = mx;
 		f->wish_z = mz;
-		cap = hold_a ? vmax : s->walk;
+		cap = hold_accel ? vmax : s->walk;
 		if (mag > 0.05f) {
 			float target = cap * mag;
 			if (f->speed < target)
@@ -188,12 +224,13 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 	f->move_x = f->wish_x;
 	f->move_z = f->wish_z;
 
-	if (tap_b && (f->grounded || f->mode == EXO_FLIGHT_HIGH)) {
+	if (tap_b) {
 		f->vy = s->jump;
 		f->grounded = 0;
+		f->flying = 1;
 	}
 
-	if (f->mode == EXO_FLIGHT_LOW)
+	if (f->mode == EXO_FLIGHT_LOW && f->grounded)
 		f->vy -= EXO_FLIGHT_GRAV * dt;
 
 	f->y += f->vy * dt;
@@ -202,8 +239,10 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		if (f->vy < 0.0f)
 			f->vy = 0.0f;
 		f->grounded = 1;
+		f->flying = 0;
 	} else {
 		f->grounded = 0;
+		f->flying = 1;
 		if (f->y > EXO_FLIGHT_Y_MAX) {
 			f->y = EXO_FLIGHT_Y_MAX;
 			if (f->vy > 0.0f)
@@ -211,16 +250,31 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		}
 	}
 
-	if (f->mode == EXO_FLIGHT_LOW && f->speed >= EXO_FLIGHT_HYST_ENTER)
+	if (f->mode == EXO_FLIGHT_LOW &&
+	    (f->speed >= EXO_FLIGHT_HYST_ENTER || f->charge >= 1.0f)) {
 		f->mode = EXO_FLIGHT_HIGH;
-	else if (f->mode == EXO_FLIGHT_HIGH && f->speed <= EXO_FLIGHT_HYST_LEAVE)
+		f->cruise = f->speed;
+		if (f->cruise < EXO_FLIGHT_HYST_ENTER)
+			f->cruise = EXO_FLIGHT_HYST_ENTER;
+		if (f->cruise > vmax)
+			f->cruise = vmax;
+		f->speed = f->cruise;
+		f->charge = 1.0f;
+	} else if (f->mode == EXO_FLIGHT_HIGH && f->speed <= EXO_FLIGHT_HYST_LEAVE) {
 		f->mode = EXO_FLIGHT_LOW;
+		f->cruise = 0.0f;
+	}
 
-	/* visual only: tunnel vision quando a fracao de vmax sobe */
-	frac = (vmax > 1.0f) ? clampf(f->speed / vmax, 0.0f, 1.0f) : 0.0f;
-	f->focal = EXO_FLIGHT_FOCAL + frac * frac * 70.0f;
+	{
+		float want_bank = 0.0f;
+		if (f->mode == EXO_FLIGHT_HIGH || f->flying)
+			want_bank = sx * EXO_FLIGHT_BANK_MAX;
+		f->bank += (want_bank - f->bank) * clampf(dt * 7.0f, 0.0f, 1.0f);
+	}
 
-	if (f->mode == EXO_FLIGHT_HIGH) {
+	f->focal = EXO_FLIGHT_FOCAL;
+
+	if (f->mode == EXO_FLIGHT_HIGH || f->flying) {
 		f->cam_h = 28.0f + f->y;
 		f->cam_dist = 42.0f;
 		f->horizon = 88.0f - clampf(f->y * 0.08f, 0.0f, 18.0f);
@@ -251,6 +305,14 @@ float exo_flight_hud_speed(const ExoFlight *f)
 	return (f->speed / vmax) * full;
 }
 
+float exo_flight_speed_frac(const ExoFlight *f)
+{
+	float vmax = exo_flight_vmax(f);
+	if (vmax <= 0.0f)
+		return 0.0f;
+	return clampf(f->speed / vmax, 0.0f, 1.0f);
+}
+
 void exo_flight_eye_offset(const ExoFlight *f, float slider, int eye_sign,
                            float *ox, float *oy)
 {
@@ -271,10 +333,27 @@ static void to_cam(const ExoFlight *f, float wx, float wz, float eye,
 static void cam_to_screen(const ExoFlight *f, float lx, float lz,
                           float *sx, float *sy)
 {
-	float foc = (f->focal > 80.0f) ? f->focal : EXO_FLIGHT_FOCAL;
-	float k = foc / lz;
+	float k = EXO_FLIGHT_FOCAL / lz;
 	*sx = 200.0f + lx * k;
 	*sy = f->horizon + (f->cam_h - f->y) * k;
+}
+
+void exo_flight_apply_ref(const ExoFlight *f, float *sx, float *sy)
+{
+	float cx = 200.0f;
+	float cy = f->horizon;
+	float c, s, dx, dy;
+
+	if (f->cam_ref != EXO_CAM_PILOT)
+		return;
+	if (fabsf(f->bank) < 0.002f)
+		return;
+	c = cosf(f->bank);
+	s = sinf(f->bank);
+	dx = *sx - cx;
+	dy = *sy - cy;
+	*sx = cx + dx * c - dy * s;
+	*sy = cy + dx * s + dy * c;
 }
 
 int exo_flight_project(const ExoFlight *f, float wx, float wz,
@@ -285,6 +364,7 @@ int exo_flight_project(const ExoFlight *f, float wx, float wz,
 	if (lz < EXO_FLIGHT_NEAR)
 		return 0;
 	cam_to_screen(f, lx, lz, sx, sy);
+	exo_flight_apply_ref(f, sx, sy);
 	return 1;
 }
 
@@ -293,7 +373,7 @@ int exo_flight_tile_visible(const ExoFlight *f, float wx, float wz,
 {
 	float lx[4], lz[4];
 	float half = cell * 0.5f;
-	float foc = (f->focal > 80.0f) ? f->focal : EXO_FLIGHT_FOCAL;
+	float foc = EXO_FLIGHT_FOCAL;
 	int i, ahead = 0;
 	float min_lz = 1e9f;
 
@@ -364,8 +444,10 @@ int exo_flight_clip_quad(const ExoFlight *f, float wx, float wz, float cell,
 		return 0;
 	}
 	if (n > 6) n = 6;
-	for (i = 0; i < n; ++i)
+	for (i = 0; i < n; ++i) {
 		cam_to_screen(f, olx[i], olz[i], &sx[i], &sy[i]);
+		exo_flight_apply_ref(f, &sx[i], &sy[i]);
+	}
 	*nv = n;
 	return 1;
 }
