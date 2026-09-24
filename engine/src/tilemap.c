@@ -34,6 +34,25 @@ void exo_tilemap_set_atlas(ExoTilemap *m, uint16_t cols, uint16_t count)
 		m->atlas_cols = guess_cols(m->tile_count);
 }
 
+void exo_tilemap_from_ids(ExoTilemap *m, const uint8_t *ids,
+                          uint16_t w, uint16_t h, uint16_t count, uint16_t cols)
+{
+	uint32_t n, i;
+
+	exo_tilemap_clear(m);
+	if (!ids || w == 0 || h == 0 || w > EXO_TILEMAP_MAX || h > EXO_TILEMAP_MAX)
+		return;
+	m->w = w;
+	m->h = h;
+	m->tile_px = EXO_TILE_PX;
+	m->tile_count = count ? count : 1;
+	m->atlas_cols = cols ? cols : guess_cols(m->tile_count);
+	n = (uint32_t)w * (uint32_t)h;
+	for (i = 0; i < n; ++i)
+		m->cells[i] = ids[i];
+	m->loaded = true;
+}
+
 void exo_tile_index_rgb(uint16_t idx, uint8_t *r, uint8_t *g, uint8_t *b)
 {
 	*r = (uint8_t)(idx & 0xFFu);
@@ -52,6 +71,51 @@ uint16_t exo_tilemap_at(const ExoTilemap *m, int x, int y)
 	if (!m || x < 0 || y < 0 || x >= (int)m->w || y >= (int)m->h)
 		return EXO_TILE_WALL;
 	return m->cells[y * m->w + x];
+}
+
+int16_t exo_tilemap_cell_h(const ExoTilemap *m, int x, int y)
+{
+	if (!m || x < 0 || y < 0 || x >= (int)m->w || y >= (int)m->h)
+		return EXO_HEIGHT_VOID;
+	return m->height[y * m->w + x];
+}
+
+void exo_tilemap_set_h(ExoTilemap *m, int x, int y, int16_t h)
+{
+	if (!m || x < 0 || y < 0 || x >= (int)m->w || y >= (int)m->h)
+		return;
+	m->height[y * m->w + x] = h;
+}
+
+int exo_tilemap_walkable(const ExoTilemap *m, int x, int y)
+{
+	return exo_tilemap_cell_h(m, x, y) > (EXO_HEIGHT_VOID / 2);
+}
+
+float exo_tilemap_sample_h(const ExoTilemap *m, float wx, float wz)
+{
+	float gx, gz, fx, fz;
+	int x0, z0;
+	float h00, h10, h01, h11;
+
+	gx = wx / 32.0f;
+	gz = wz / 32.0f;
+	x0 = (int)gx;
+	z0 = (int)gz;
+	if (gx < 0.0f) x0 = (int)gx - 1;
+	if (gz < 0.0f) z0 = (int)gz - 1;
+	fx = gx - (float)x0;
+	fz = gz - (float)z0;
+	if (!exo_tilemap_walkable(m, x0, z0))
+		return (float)EXO_HEIGHT_VOID;
+	h00 = (float)exo_tilemap_cell_h(m, x0, z0);
+	h10 = exo_tilemap_walkable(m, x0 + 1, z0) ? (float)exo_tilemap_cell_h(m, x0 + 1, z0) : h00;
+	h01 = exo_tilemap_walkable(m, x0, z0 + 1) ? (float)exo_tilemap_cell_h(m, x0, z0 + 1) : h00;
+	h11 = exo_tilemap_walkable(m, x0 + 1, z0 + 1) ? (float)exo_tilemap_cell_h(m, x0 + 1, z0 + 1) : h00;
+	return h00 * (1.0f - fx) * (1.0f - fz) +
+	       h10 * fx * (1.0f - fz) +
+	       h01 * (1.0f - fx) * fz +
+	       h11 * fx * fz;
 }
 
 bool exo_tilemap_solid(const ExoTilemap *m, int x, int y)
