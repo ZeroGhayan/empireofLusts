@@ -1,4 +1,5 @@
 #include "exo/terrain.h"
+#include <stddef.h>
 
 static int s_cols;
 
