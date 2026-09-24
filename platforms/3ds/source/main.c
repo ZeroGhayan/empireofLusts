@@ -38,7 +38,6 @@ static C2D_SpriteSheet g_shi;
 static C2D_SpriteSheet g_rex;
 static bool g_have_bg[3];
 static bool g_paused;
-static int  g_tune;
 static float g_fps = 60.0f;
 
 static u32 tile_color(uint16_t id)
@@ -229,7 +228,7 @@ done:
 
 static int pilot_frame(const ExoFlight *f)
 {
-	if (!f->grounded || f->y > 3.0f)
+	if (f->y > 2.5f)
 		return 3;
 	if (f->mode == EXO_FLIGHT_HIGH)
 		return 2;
@@ -242,6 +241,7 @@ static void draw_pilot(const ExoFlight *f)
 {
 	C2D_SpriteSheet sheet;
 	C2D_Image img;
+	C2D_Sprite spr;
 	float px, py, iw, ih;
 	int frame = pilot_frame(f);
 	size_t n;
@@ -260,12 +260,46 @@ static void draw_pilot(const ExoFlight *f)
 
 	if (!exo_flight_project(f, f->x, f->z, 0.0f, &px, &py)) {
 		px = 200.0f;
-		py = 200.0f;
+		py = 198.0f;
 	}
-	py -= f->y * 0.35f;
-	if (py > 236.0f) py = 236.0f;
-	if (py < 28.0f) py = 28.0f;
-	C2D_DrawImageAt(img, px - iw * 0.5f, py - ih, 0.62f, NULL, 1.0f, 1.0f);
+	if (py > 228.0f) py = 228.0f;
+	if (py < 36.0f) py = 36.0f;
+
+	C2D_SpriteFromSheet(&spr, sheet, frame);
+	C2D_SpriteSetCenter(&spr, iw * 0.5f, ih);
+	C2D_SpriteSetPos(&spr, px, py);
+	if (f->cam_ref == EXO_CAM_SURFACE)
+		C2D_SpriteSetRotation(&spr, f->bank);
+	else
+		C2D_SpriteSetRotation(&spr, 0.0f);
+	C2D_DrawSprite(&spr);
+}
+
+static void draw_speed_veil(const ExoFlight *f)
+{
+	float frac = exo_flight_speed_frac(f);
+	float a;
+	u32 col;
+
+	if (frac < 0.35f)
+		return;
+	a = (frac - 0.35f) / 0.65f;
+	if (a > 1.0f) a = 1.0f;
+	a = a * a;
+	col = ((u32)(150.0f * a) << 24);
+	C2D_DrawRectSolid(0.0f, 0.0f, 0.85f, 400.0f, 240.0f, col);
+	C2D_DrawRectSolid(0.0f, 0.0f, 0.86f, 400.0f, 28.0f + 36.0f * a, col);
+	C2D_DrawRectSolid(0.0f, 212.0f - 20.0f * a, 0.86f, 400.0f, 28.0f + 20.0f * a, col);
+}
+
+static void draw_charge_bar(const ExoFlight *f)
+{
+	float w = 72.0f * f->charge;
+	u32 fill = (f->mode == EXO_FLIGHT_HIGH) ? RGB32(255, 90, 70) : RGB32(80, 200, 255);
+
+	C2D_DrawRectSolid(8.0f, 224.0f, 0.88f, 74.0f, 8.0f, RGB32(20, 22, 32));
+	if (w > 0.5f)
+		C2D_DrawRectSolid(9.0f, 225.0f, 0.89f, w, 6.0f, fill);
 }
 
 static void draw_top_overlay(const ExoFlight *f)
@@ -332,24 +366,14 @@ static int touch_in(const ExoInput *in, float x, float y, float w, float h)
 
 static void apply_tune(ExoFlight *f, const ExoInput *in)
 {
-	float vmax_t, rend_t;
+	float rend_t;
 	const float sx = 8.0f, sw = 196.0f;
-	const float y0 = 132.0f, y1 = 168.0f;
+	const float y1 = 168.0f;
 
-	if (exo_down(EXO_BTN_UP) || exo_down(EXO_BTN_DOWN))
-		g_tune = 1 - g_tune;
-
-	if (touch_in(in, sx, y0, sw, 28.0f))
-		g_tune = 0;
-	if (touch_in(in, sx, y1, sw, 28.0f))
-		g_tune = 1;
-
-	if (touch_in(in, sx, y0, sw, 28.0f)) {
-		vmax_t = ((float)in->touch_x - sx) / sw;
-		if (vmax_t < 0.0f) vmax_t = 0.0f;
-		if (vmax_t > 1.0f) vmax_t = 1.0f;
-		f->rexxi_vmax = EXO_FLIGHT_REXXI_VMIN +
-		                vmax_t * (EXO_FLIGHT_REXXI_VCEIL - EXO_FLIGHT_REXXI_VMIN);
+	if (in && in->touch_press &&
+	    (float)in->touch_x >= sx && (float)in->touch_x <= sx + sw &&
+	    (float)in->touch_y >= 132.0f && (float)in->touch_y <= 160.0f) {
+		f->cam_ref = (f->cam_ref == EXO_CAM_SURFACE) ? EXO_CAM_PILOT : EXO_CAM_SURFACE;
 	}
 	if (touch_in(in, sx, y1, sw, 28.0f)) {
 		rend_t = ((float)in->touch_x - sx) / sw;
@@ -361,28 +385,15 @@ static void apply_tune(ExoFlight *f, const ExoInput *in)
 
 	if (exo_down(EXO_BTN_LEFT) || exo_down(EXO_BTN_RIGHT)) {
 		int dir = exo_down(EXO_BTN_RIGHT) ? 1 : -1;
-		if (g_tune == 0) {
-			f->rexxi_vmax += (float)dir * 2.0f;
-			if (f->rexxi_vmax < EXO_FLIGHT_REXXI_VMIN)
-				f->rexxi_vmax = EXO_FLIGHT_REXXI_VMIN;
-			if (f->rexxi_vmax > EXO_FLIGHT_REXXI_VCEIL)
-				f->rexxi_vmax = EXO_FLIGHT_REXXI_VCEIL;
-		} else {
-			f->render_r += dir;
-			if (f->render_r < EXO_FLIGHT_RENDER_MIN)
-				f->render_r = EXO_FLIGHT_RENDER_MIN;
-			if (f->render_r > EXO_FLIGHT_RENDER_MAX)
-				f->render_r = EXO_FLIGHT_RENDER_MAX;
-		}
+		f->render_r += dir;
+		if (f->render_r < EXO_FLIGHT_RENDER_MIN)
+			f->render_r = EXO_FLIGHT_RENDER_MIN;
+		if (f->render_r > EXO_FLIGHT_RENDER_MAX)
+			f->render_r = EXO_FLIGHT_RENDER_MAX;
 	}
 
-	if (exo_down(EXO_BTN_SELECT)) {
-		f->rexxi_vmax = EXO_FLIGHT_REXXI_VMAX;
+	if (exo_down(EXO_BTN_SELECT))
 		f->render_r = EXO_FLIGHT_RENDER;
-	}
-
-	if (f->pilot == EXO_PILOT_REXXI && f->speed > f->rexxi_vmax)
-		f->speed = f->rexxi_vmax;
 }
 
 static void draw_hud(const ExoFlight *f)
@@ -393,8 +404,6 @@ static void draw_hud(const ExoFlight *f)
 	float hud_max = exo_flight_hud_max(f);
 	float bar;
 	float vmax = exo_flight_vmax(f);
-	float vmax_t = (f->rexxi_vmax - EXO_FLIGHT_REXXI_VMIN) /
-	               (EXO_FLIGHT_REXXI_VCEIL - EXO_FLIGHT_REXXI_VMIN);
 	float rend_t = (float)(f->render_r - EXO_FLIGHT_RENDER_MIN) /
 	               (float)(EXO_FLIGHT_RENDER_MAX - EXO_FLIGHT_RENDER_MIN);
 
@@ -426,21 +435,21 @@ static void draw_hud(const ExoFlight *f)
 	             f->mode == EXO_FLIGHT_HIGH ? RGB32(255, 90, 70)
 	                                       : RGB32(80, 180, 255));
 
-	draw_slider("REXXI VMAX", vmax_t, g_tune == 0, 8.0f, 132.0f, 196.0f);
-	snprintf(line, sizeof(line), "%4.0f", (double)f->rexxi_vmax);
-	exo_text(160.0f, 132.0f, 0.38f, COL_TEXT, line);
-	draw_slider("RENDER R", rend_t, g_tune == 1, 8.0f, 168.0f, 196.0f);
+	exo_text(8.0f, 132.0f, 0.38f, COL_ACCENT, "CAM REF");
+	exo_text(8.0f, 146.0f, 0.38f, COL_TEXT,
+	         f->cam_ref == EXO_CAM_SURFACE ? "SURFACE" : "PILOT");
+	draw_slider("RENDER R", rend_t, 1, 8.0f, 168.0f, 196.0f);
 	snprintf(line, sizeof(line), "%d", f->render_r);
 	exo_text(170.0f, 168.0f, 0.38f, COL_TEXT, line);
 
 	draw_pad_graph(f);
 
-	if (f->mode == EXO_FLIGHT_HIGH)
-		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "A SPEED  PAD PITCH  B POP");
+	if (f->mode == EXO_FLIGHT_HIGH || f->flying)
+		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "Y SPEED  A BRAKE  B POP");
 	else
 		exo_text(8.0f, 200.0f, 0.32f, COL_DIM, "A SPEED  B JUMP  X SISTER");
-	exo_text(8.0f, 214.0f, 0.32f, COL_DIM, "DPAD TUNE  TOUCH SLIDER");
-	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT RESET  START PAUSE");
+	exo_text(8.0f, 214.0f, 0.32f, COL_DIM, "ZR CAM  DPAD R  TOUCH REF");
+	exo_text(8.0f, 228.0f, 0.32f, COL_DIM, "SELECT R18  START PAUSE");
 	if (g_paused)
 		exo_text(214.0f, 220.0f, 0.45f, COL_ACCENT, "PAUSED");
 }
@@ -452,7 +461,6 @@ int main(void)
 	exo_flight_init(&g_flight, EXO_PILOT_SHIRAMMY);
 	try_load_etm();
 	load_gfx();
-	g_tune = 1;
 	while (exo_frame_begin()) {
 		const ExoInput *in = exo_input();
 		float dt = exo_dt();
@@ -473,12 +481,16 @@ int main(void)
 		draw_layers(EXO_EYE_LEFT, &g_flight);
 		draw_floor(EXO_EYE_LEFT, &g_flight);
 		draw_pilot(&g_flight);
+		draw_speed_veil(&g_flight);
+		draw_charge_bar(&g_flight);
 		draw_top_overlay(&g_flight);
 		if (exo_slider_3d() > 0.05f) {
 			exo_render_eye(EXO_EYE_RIGHT, COL_SKY);
 			draw_layers(EXO_EYE_RIGHT, &g_flight);
 			draw_floor(EXO_EYE_RIGHT, &g_flight);
 			draw_pilot(&g_flight);
+			draw_speed_veil(&g_flight);
+			draw_charge_bar(&g_flight);
 			draw_top_overlay(&g_flight);
 		}
 		draw_hud(&g_flight);
