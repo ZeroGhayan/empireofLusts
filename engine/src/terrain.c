@@ -1,20 +1,28 @@
 #include "exo/terrain.h"
 
+static int s_cols;
+
 int exo_terrain_cols(ExoCourse course, const ExoTilemap *m)
 {
+	int c;
+
 	if (m && m->atlas_cols)
-		return (int)m->atlas_cols;
-	if (course == EXO_COURSE_SS4)
-		return EXO_SS4_COLS;
-	if (course == EXO_COURSE_DP1)
-		return EXO_DP1_COLS;
-	return 8;
+		c = (int)m->atlas_cols;
+	else if (course == EXO_COURSE_SS4)
+		c = EXO_SS4_COLS;
+	else if (course == EXO_COURSE_DP1)
+		c = EXO_DP1_COLS;
+	else
+		c = 8;
+	if (c < 1)
+		c = 1;
+	s_cols = c;
+	return c;
 }
 
-void exo_terrain_xy(ExoCourse course, const ExoTilemap *m, uint16_t id,
-                    int *tx, int *ty)
+void exo_terrain_xy(ExoCourse course, uint16_t id, int *tx, int *ty)
 {
-	int cols = exo_terrain_cols(course, m);
+	int cols = s_cols ? s_cols : exo_terrain_cols(course, NULL);
 	if (cols < 1)
 		cols = 1;
 	if (tx) *tx = (int)id % cols;
