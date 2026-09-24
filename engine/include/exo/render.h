@@ -25,5 +25,6 @@ void  exo_top_text(float x, float y, float scale, uint32_t rgba, const char *s);
 
 /* deslocamento em pixels: depth 0 = tela, maior = mais perto */
 float exo_parallax(float depth, ExoEye eye);
+float exo_slider_3d(void);
 
 #endif
