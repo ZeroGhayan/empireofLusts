@@ -74,7 +74,6 @@ void exo_tilemap_place_pad(ExoTilemap *m)
 	if (!m || m->w < 20 || m->h < 20)
 		return;
 	mid = (int)m->w / 2;
-	/* pad 2x2 roxo a norte da cruz, fim do percurso */
 	for (dz = 0; dz < 2; ++dz) {
 		for (dx = 0; dx < 2; ++dx) {
 			x = mid + dx;
@@ -124,9 +123,9 @@ void exo_tilemap_demo(ExoTilemap *m)
 bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 {
 	const uint8_t *p = (const uint8_t *)data;
-	uint32_t magic, need;
+	uint32_t magic;
 	uint16_t w, h, tile_px, count;
-	uint32_t n, i;
+	uint32_t n, i, have;
 
 	exo_tilemap_clear(m);
 	if (!p || size < 16)
@@ -148,9 +147,9 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 		tile_px = EXO_TILE_PX;
 
 	n = (uint32_t)w * (uint32_t)h;
-	need = 16u + n * 2u;
-	if (size < need)
-		return false;
+	have = (size - 16u) / 2u;
+	if (have < n)
+		n = have;
 
 	m->w = w;
 	m->h = h;
@@ -161,7 +160,5 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 		m->cells[i] = (uint16_t)(c[0] | (c[1] << 8));
 	}
 	m->loaded = true;
-	exo_tilemap_place_springs(m);
-	exo_tilemap_place_pad(m);
 	return true;
 }
