@@ -30,9 +30,9 @@ static const u32 TILE_COL[] = {
 
 static ExoFlight g_flight;
 static C2D_SpriteSheet g_bg[3];
-static C2D_SpriteSheet g_pilot;
+static C2D_SpriteSheet g_shi;
+static C2D_SpriteSheet g_rex;
 static bool g_have_bg[3];
-static bool g_have_pilot;
 static bool g_paused;
 
 static u32 tile_color(uint16_t id)
@@ -81,8 +81,8 @@ static void load_gfx(void)
 		g_bg[i] = C2D_SpriteSheetLoad(bgpath[i]);
 		g_have_bg[i] = g_bg[i] != NULL;
 	}
-	g_pilot = C2D_SpriteSheetLoad("romfs:/gfx/pilot.t3x");
-	g_have_pilot = g_pilot != NULL;
+	g_shi = C2D_SpriteSheetLoad("romfs:/gfx/shirammy.t3x");
+	g_rex = C2D_SpriteSheetLoad("romfs:/gfx/rexxi.t3x");
 }
 
 static void draw_layers(ExoEye eye, const ExoFlight *f)
@@ -112,6 +112,35 @@ static void draw_layers(ExoEye eye, const ExoFlight *f)
 	}
 }
 
+static void draw_poly(const float *s, const float *t, int n, u32 col)
+{
+	int k;
+	if (n < 3)
+		return;
+	for (k = 1; k < n - 1; ++k)
+		C2D_DrawTriangle(s[0], t[0], col, s[k], t[k], col, s[k + 1], t[k + 1], col, 0.3f);
+}
+
+static int emit_tile(ExoFlight *f, float ox, int tx, int tz, int *drawn, int cap)
+{
+	float sx[6], sy[6];
+	int nv = 0;
+	float pad = 0.7f;
+	float wx, wz;
+
+	if (*drawn >= cap)
+		return 0;
+	if (tx < 0 || tz < 0 || tx >= (int)f->map.w || tz >= (int)f->map.h)
+		return 1;
+	wx = (float)tx * EXO_FLIGHT_CELL - pad;
+	wz = (float)tz * EXO_FLIGHT_CELL - pad;
+	if (!exo_flight_clip_quad(f, wx, wz, EXO_FLIGHT_CELL + pad * 2.0f, ox, sx, sy, &nv))
+		return 1;
+	draw_poly(sx, sy, nv, tile_color(exo_tilemap_at(&f->map, tx, tz)));
+	(*drawn)++;
+	return 1;
+}
+
 static void draw_floor(ExoEye eye, ExoFlight *f)
 {
 	float ox, oy;
@@ -123,86 +152,60 @@ static void draw_floor(ExoEye eye, ExoFlight *f)
 	exo_flight_eye_offset(f, exo_slider_3d(), (int)eye, &ox, &oy);
 	(void)oy;
 
-	/* longe → perto, para o chão perto tapar o longe */
-	for (dz = R; dz >= -3; --dz) {
-		for (dx = -R; dx <= R; ++dx) {
-			int tx = cx + dx;
-			int tz = cz + dz;
-			float wx = (float)tx * EXO_FLIGHT_CELL;
-			float wz = (float)tz * EXO_FLIGHT_CELL;
-			float s[4], t[4];
-			int vis[4];
-			int ok = 0;
-			u32 col;
-			int i;
+	/* 1. anel perto — preenche debaixo dos pes, nunca fica de fora do cap */
+	for (dz = -3; dz <= 8; ++dz)
+		for (dx = -8; dx <= 8; ++dx)
+			emit_tile(f, ox, cx + dx, cz + dz, &drawn, 400);
 
-			if (tx < 0 || tz < 0 || tx >= (int)f->map.w || tz >= (int)f->map.h)
-				continue;
-
-			vis[0] = exo_flight_project(f, wx, wz, ox, &s[0], &t[0]);
-			vis[1] = exo_flight_project(f, wx + EXO_FLIGHT_CELL, wz, ox, &s[1], &t[1]);
-			vis[2] = exo_flight_project(f, wx + EXO_FLIGHT_CELL, wz + EXO_FLIGHT_CELL, ox, &s[2], &t[2]);
-			vis[3] = exo_flight_project(f, wx, wz + EXO_FLIGHT_CELL, ox, &s[3], &t[3]);
-			for (i = 0; i < 4; ++i)
-				ok += vis[i];
-			if (ok < 3)
-				continue;
-
-			col = tile_color(exo_tilemap_at(&f->map, tx, tz));
-			if (ok == 4) {
-				C2D_DrawTriangle(s[0], t[0], col, s[1], t[1], col, s[2], t[2], col, 0.3f);
-				C2D_DrawTriangle(s[0], t[0], col, s[2], t[2], col, s[3], t[3], col, 0.3f);
-			} else {
-				int a = -1, b = -1, c = -1;
-				for (i = 0; i < 4; ++i) {
-					if (!vis[i]) continue;
-					if (a < 0) a = i;
-					else if (b < 0) b = i;
-					else c = i;
-				}
-				if (c >= 0)
-					C2D_DrawTriangle(s[a], t[a], col, s[b], t[b], col, s[c], t[c], col, 0.3f);
-			}
-			drawn++;
-			if (drawn >= 280)
+	/* 2. resto, longe → perto, com tecto */
+	for (dz = R; dz >= 9; --dz)
+		for (dx = -R; dx <= R; ++dx)
+			if (!emit_tile(f, ox, cx + dx, cz + dz, &drawn, 280))
 				goto done;
-		}
-	}
+
 done:
 	f->tiles_drawn = drawn;
 }
 
+static int pilot_frame(const ExoFlight *f)
+{
+	if (!f->grounded || f->y > 3.0f)
+		return 3; /* flight */
+	if (f->mode == EXO_FLIGHT_HIGH)
+		return 2; /* high */
+	if (f->speed > 2.5f)
+		return 1; /* low / run */
+	return 0; /* idle */
+}
+
 static void draw_pilot(const ExoFlight *f)
 {
-	float x = 200.0f, y, w, h;
-	int frame = 0;
-	float hop = f->y * 1.1f;
+	C2D_SpriteSheet sheet;
+	C2D_Image img;
+	float px, py, iw, ih;
+	int frame = pilot_frame(f);
+	size_t n;
 
-	if (f->mode == EXO_FLIGHT_HIGH) {
-		y = 148.0f - hop; w = 36.0f; h = 22.0f; frame = 1;
-	} else {
-		y = 132.0f - hop; w = 28.0f; h = 40.0f; frame = 0;
-	}
-
-	if (g_have_pilot) {
-		size_t n = C2D_SpriteSheetCount(g_pilot);
-		if (n == 0) return;
-		if ((size_t)frame >= n) frame = 0;
-		{
-			C2D_Image img = C2D_SpriteSheetGetImage(g_pilot, frame);
-			C2D_DrawImageAt(img, x - w * 0.5f, y, 0.6f, NULL, w / 32.0f, h / 32.0f);
-		}
+	sheet = (f->pilot == EXO_PILOT_REXXI) ? g_rex : g_shi;
+	if (!sheet)
 		return;
-	}
+	n = C2D_SpriteSheetCount(sheet);
+	if (n == 0)
+		return;
+	if ((size_t)frame >= n)
+		frame = 0;
+	img = C2D_SpriteSheetGetImage(sheet, frame);
+	iw = img.subtex ? img.subtex->width : 32.0f;
+	ih = img.subtex ? img.subtex->height : 48.0f;
 
-	if (f->mode == EXO_FLIGHT_HIGH) {
-		C2D_DrawTriangle(x, y, RGB32(240, 80, 70),
-		                 x - 22.0f, y + 20.0f, RGB32(180, 40, 40),
-		                 x + 22.0f, y + 20.0f, RGB32(180, 40, 40), 0.6f);
-	} else {
-		C2D_DrawRectSolid(x - 10.0f, y, 0.6f, 20.0f, 28.0f, RGB32(70, 180, 255));
-		C2D_DrawRectSolid(x - 8.0f, y - 10.0f, 0.61f, 16.0f, 12.0f, RGB32(240, 200, 160));
+	if (!exo_flight_project(f, f->x, f->z, 0.0f, &px, &py)) {
+		px = 200.0f;
+		py = 200.0f;
 	}
+	py -= f->y * 1.35f;
+	if (py > 236.0f) py = 236.0f;
+	if (py < 40.0f) py = 40.0f;
+	C2D_DrawImageAt(img, px - iw * 0.5f, py - ih, 0.62f, NULL, 1.0f, 1.0f);
 }
 
 static void draw_hud(const ExoFlight *f)
@@ -276,7 +279,8 @@ int main(void)
 		exo_render_end();
 		exo_frame_end();
 	}
-	if (g_pilot) C2D_SpriteSheetFree(g_pilot);
+	if (g_shi) C2D_SpriteSheetFree(g_shi);
+	if (g_rex) C2D_SpriteSheetFree(g_rex);
 	if (g_bg[0]) C2D_SpriteSheetFree(g_bg[0]);
 	if (g_bg[1]) C2D_SpriteSheetFree(g_bg[1]);
 	if (g_bg[2]) C2D_SpriteSheetFree(g_bg[2]);
