@@ -60,7 +60,10 @@ bool exo_init(void)
 	   mesmo no New 3DS (no 3DS antigo a chamada nao faz nada). */
 	osSetSpeedupEnable(true);
 	gfxInitDefault();
-	gfxSet3D(true);
+	APT_CheckNew3DS(&g_new3ds);
+	/* 3D estereo no voo so no New 3DS (decisao 26/11). No Old o hardware
+	   nem liga o modo 3D e o slider e tratado como 0. */
+	gfxSet3D(g_new3ds);
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 	/* dois olhos + HUD; o default 4096 rebenta com minimapa a pontos */
 	C2D_Init(8192);
@@ -76,7 +79,6 @@ bool exo_init(void)
 
 	g_tbuf = C2D_TextBufNew(512);
 	g_romfs = (romfsInit() == 0);
-	APT_CheckNew3DS(&g_new3ds);
 	g_t0 = osGetTime();
 	g_t1 = g_t0;
 	g_dt = 1.0f / 60.0f;
@@ -137,7 +139,7 @@ bool exo_frame_begin(void)
 	g_in.stick_y  = axis_from(g_stick.dy);
 	g_in.cstick_x = axis_from(g_cstick.dx);
 	g_in.cstick_y = axis_from(g_cstick.dy);
-	g_in.slider_3d = g_slider;
+	g_in.slider_3d = g_new3ds ? g_slider : 0.0f;
 	g_in.new_3ds  = g_new3ds;
 	return true;
 }
@@ -151,7 +153,7 @@ bool  exo_down(u32 m) { return (g_in.down & m) != 0; }
 bool  exo_held(u32 m) { return (g_in.held & m) != 0; }
 bool  exo_up(u32 m)   { return (g_in.up & m) != 0; }
 float exo_dt(void)    { return g_dt; }
-float exo_slider_3d(void) { return g_slider; }
+float exo_slider_3d(void) { return g_new3ds ? g_slider : 0.0f; }
 
 void exo_render_begin(void)
 {

@@ -149,9 +149,12 @@ hardware. O caminho crítico é o item 3, o mapa aéreo com chunks.
 ## 5. Orçamento do 3DS e plano de otimização
 
 - **Quadro:** 16,6 ms a 60 fps ou 33,3 ms a 30 fps.
-- **Proposta:** o voo mira 30 fps estáveis com 3D ligado no New 3DS e 60 fps
-  com o 3D desligado. O 3DS antigo fica como "funciona a 30 fps com R menor".
-  É uma decisão sua.
+- **Alvo de FPS (decidido em 26/11):** 30 fps estáveis com o 3D ligado e
+  60 fps com o 3D desligado.
+- **Disponibilidade do 3D no voo:** só nos modelos New 3DS. No Old 3DS o
+  efeito fica forçado desligado (`gfxSet3D(false)` e o slider é lido como
+  0): o portátil antigo não tem CPU para o segundo olho no voo, e o alvo
+  nele é 30 fps com o 3D off (e raio de render menor, se precisar).
 
 | Recurso | Old 3DS | New 3DS | Uso atual estimado (R=15) |
 |---|---|---|---|
@@ -159,13 +162,14 @@ hardware. O caminho crítico é o item 3, o mapa aéreo com chunks.
 | Vértices de GPU por quadro (prático) | cerca de 20 a 30 mil com shader simples | igual (mesma GPU, 268 MHz) | piso até 273 × 6 × 2 olhos ≈ 3,3 mil, mais citro2d |
 | Desenhos (lotes) | dezenas é tranquilo | igual | 1 a 3 lotes de piso por olho e lotes do citro2d |
 | Objetos citro2d | 8.192 (C2D_Init) | igual | antes eram mais de 9.216 só no minimapa; agora sobram centenas |
-| Estereoscopia | cerca de 2× o custo do top | igual | top_r refaz toda a projeção; item 10 da tabela |
+| Estereoscopia | desligada no voo | cerca de 2× o custo do top, só se o slider > 0 | top_r refaz toda a projeção; item 10 da tabela |
 
 **Ordem do plano:**
-1. Medir com o CSV: R = 8, 15 e 20; 3D desligado e no máximo; Shirammy e
-   Rexxi; neblina ligada e desligada.
-2. Se o tempo de CPU passar de 16,6 ms: fazer o item 10 (projeção única) e
-   baixar o `draw_cap`.
+1. Medir com o CSV no New 3DS: R = 8, 15 e 20; 3D desligado (meta 16,6 ms)
+   e no máximo (meta 33,3 ms); Shirammy e Rexxi; neblina ligada e
+   desligada. No Old 3DS o 3D não entra, então só a série sem 3D.
+2. Se o tempo de CPU passar da meta (16,6 ms sem 3D, 33,3 ms com 3D):
+   fazer o item 10 (projeção única) e baixar o `draw_cap`.
 3. Se o wait for baixo e o gpu_draw alto: reduzir o fill. Fazer o LOD em uma
    única malha (triangle strip) e cortar a saia de neblina acima do horizonte.
 4. No mapa aéreo, usar streaming por chunk de voo com no máximo 3×3 chunks
@@ -196,7 +200,9 @@ hardware. O caminho crítico é o item 3, o mapa aéreo com chunks.
      neblina F/f e New/Old N/o.
    - **CPU real** = `frame_ms - wait_ms`. Se `wait_ms` for quase 0 e
      `frame_ms` passar de 16,6, o jogo está abaixo de 60 fps.
-5. **Roteiro sugerido de cerca de 2 minutos:** voe 30 s com o 3D desligado,
-   30 s com o 3D no máximo, mude o RENDER R (toque na barra de baixo) para
-   8 e depois 20, e repita com a neblina desligada. Depois me mande os
-   arquivos `prof_*.csv`.
+5. **Roteiro sugerido de cerca de 2 minutos (New 3DS):** voe 30 s com o
+   3D desligado (meta 60 fps), 30 s com o 3D no máximo (meta 30 fps),
+   mude o RENDER R (toque na barra de baixo) para 8 e depois 20, e
+   repita com a neblina desligada. Depois me mande os arquivos
+   `prof_*.csv`. No Old 3DS o 3D não liga; o roteiro fica só com o
+   slider fechado.
