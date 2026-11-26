@@ -652,6 +652,10 @@ void exo_flight_reset_run(ExoFlight *f)
 	f->spd_delta = 0.0f;
 	if (f->course == EXO_COURSE_SS4)
 		spawn_ss4_pad(f);
+	f->aero_active = 0;
+	f->cam_x = f->x - sinf(f->cam_yaw) * f->cam_dist;
+	f->cam_z = f->z - cosf(f->cam_yaw) * f->cam_dist;
+	exo_flight_cam_update(f);
 }
 
 static void finish_course_setup(ExoFlight *f)
@@ -672,8 +676,11 @@ static void finish_course_setup(ExoFlight *f)
 		f->goal_cz = -1;
 	} else {
 		place_demo_trees(f);
-		f->goal_cx = (int)f->map.w / 2;
-		f->goal_cz = (int)f->map.h / 2 + 18;
+		/* DEMO virou o plano de teste do voo livre (menu: Y). O destino
+		   ficava 26 celulas a frente e a corrida acabava na decolagem;
+		   agora fica num canto, para treinar ir, virar e voltar. */
+		f->goal_cx = (int)f->map.w / 2 + 40;
+		f->goal_cz = (int)f->map.h / 2 + 40;
 	}
 	exo_flight_reset_run(f);
 }
@@ -724,6 +731,7 @@ void exo_flight_init(ExoFlight *f, ExoPilot pilot)
 	f->focal = EXO_FLIGHT_FOCAL;
 	f->render_r = EXO_FLIGHT_RENDER;
 	f->draw_cap = 48 + EXO_FLIGHT_RENDER * EXO_FLIGHT_RENDER;
+	f->aero_on = 1;
 	exo_flight_load_map(f, EXO_COURSE_DEMO, NULL, 0);
 }
 
@@ -924,7 +932,58 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		f->cam_yaw += cam_turn * turn_low * dt;
 	}
 
-	if (f->mode == EXO_FLIGHT_HIGH || f->flying) {
+	if (!f->flying || !f->aero_on)
+		f->aero_active = 0;
+
+	if (f->flying && f->aero_on) {
+		/* VOO LIVRE (aviao): planar por padrao, A bate asas, B freia,
+		   stick = pitch/roll, L/R = leme. Ver engine/src/aero.c. */
+		const ExoAeroProfile *ap = exo_aero_profile((int)f->pilot);
+		ExoAeroInput ai;
+		ExoAeroOut ao;
+		float hx, hz, hs;
+
+		if (!f->aero_active) {
+			float g0 = atan2f(f->vy, f->speed > 1.0f ? f->speed : 1.0f);
+			exo_aero_enter(&f->aero, ap, f->speed, g0, f->yaw);
+			f->aero_active = 1;
+		}
+		/* bumper/mola/eventos podem mexer em yaw e speed por fora */
+		f->aero.yaw = f->yaw;
+		f->aero.speed = clampf(f->speed, ap->v_min * 0.85f, ap->v_max);
+		ai.pitch = (fabsf(sy) > 0.08f) ? sy : 0.0f;
+		ai.roll = (fabsf(sx) > 0.08f) ? sx : 0.0f;
+		ai.rudder = strafe;
+		ai.flap = hold_a;
+		ai.brake = in && (in->held & EXO_BTN_B);
+		exo_aero_step(&f->aero, ap, &ai, dt, &ao);
+
+		f->yaw = f->aero.yaw;
+		f->speed = f->aero.speed;
+		f->cruise = f->speed;
+		f->body_pitch = f->aero.gamma;
+		f->body_roll = f->aero.roll;
+		{
+			float want_cam = clampf(f->body_pitch, -EXO_FLIGHT_PITCH_MAX,
+			                        EXO_FLIGHT_PITCH_MAX);
+			f->pitch += (want_cam - f->pitch) * clampf(dt * 6.0f, 0.0f, 1.0f);
+		}
+		hx = ao.vx * dt;
+		hz = ao.vz * dt;
+		hs = sqrtf(hx * hx + hz * hz);
+		if (hs > EXO_FLIGHT_CELL * 0.45f) {
+			hx *= EXO_FLIGHT_CELL * 0.45f / hs;
+			hz *= EXO_FLIGHT_CELL * 0.45f / hs;
+		}
+		nx = f->x + hx;
+		nz = f->z + hz;
+		fwd_x = sinf(f->yaw);
+		fwd_z = cosf(f->yaw);
+		f->wish_x = fwd_x;
+		f->wish_z = fwd_z;
+		f->vy = ao.vy;
+		tap_b = 0; /* no ar B e freio, nao "pulo duplo" */
+	} else if (f->mode == EXO_FLIGHT_HIGH || f->flying) {
 		fwd_x = sinf(f->yaw);
 		fwd_z = cosf(f->yaw);
 		rgt_x =  cosf(f->yaw);
@@ -1161,7 +1220,9 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		}
 	}
 
-	if (f->flying) {
+	if (f->aero_active) {
+		/* vy ja veio do modelo aero (sustentacao inclusa) */
+	} else if (f->flying) {
 		float climb = f->speed * sinf(f->body_pitch);
 		if (stable)
 			f->vy += (climb - f->vy) * clampf(dt * 8.0f, 0.0f, 1.0f);
@@ -1342,6 +1403,7 @@ void exo_flight_tick(ExoFlight *f, const ExoInput *in, float dt)
 		f->cam_x = f->x - sinf(cy) * f->cam_dist;
 		f->cam_z = f->z - cosf(cy) * f->cam_dist;
 	}
+	exo_flight_cam_update(f);
 	f->spd_delta = f->speed - f->spd_prev;
 	f->spd_prev = f->speed;
 

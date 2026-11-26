@@ -4,6 +4,7 @@
 #include "exo/types.h"
 #include "exo/input.h"
 #include "exo/tilemap.h"
+#include "exo/aero.h"
 
 #define EXO_FLIGHT_CELL          32.0f
 #define EXO_FLIGHT_SLOPE_TAN     2.747f
@@ -157,6 +158,17 @@ typedef struct ExoFlight {
 	int   input_lock;
 	float spd_prev;
 	float spd_delta;
+	/* voo livre tipo aviao (exo/aero.h). aero_on = escolha do jogador
+	   (menu de pausa); aero_active = 1 enquanto o modelo esta no ar. */
+	int   aero_on;
+	int   aero_active;
+	ExoAeroState aero;
+	/* cache de trigonometria da camera: calculado 1x por quadro em
+	   exo_flight_cam_update(), usado por cada vertice projetado. */
+	float cam_cy, cam_sy;     /* cos/sin(cam_yaw) */
+	float cam_cp, cam_sp;     /* cos/sin(-pitch) */
+	float ref_c, ref_s;       /* cos/sin do roll da tela */
+	int   ref_on;
 } ExoFlight;
 
 const ExoPilotStats *exo_pilot_stats(ExoPilot p);
@@ -190,5 +202,9 @@ int   exo_flight_tile_visible(const ExoFlight *f, float wx, float wz,
                               float cell, float eye_x, float far_z, float *lz);
 
 void  exo_flight_apply_ref(const ExoFlight *f, float *sx, float *sy);
+
+/* recalcula o cache de seno/cosseno da camera; chamar depois de mexer em
+   cam_yaw/pitch/bank/slope_roll e antes de projetar (o tick ja chama). */
+void  exo_flight_cam_update(ExoFlight *f);
 
 #endif
