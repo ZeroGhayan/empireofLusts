@@ -117,25 +117,32 @@ endif
 
 .PHONY: all pack clean
 
-# python first, then a FRESH make so wildcard picks up ss4_tiles.t3s
+# python first, then a FRESH make so wildcard picks up *.t3s
+# mk_p1.py e o atlas do proto de luta (EXO⨯VERSE). Flight nao precisa.
 all:
-	@python3 $(CURDIR)/gfx/mk_p1.py
+	@if [ -f $(CURDIR)/gfx/mk_p1.py ]; then python3 $(CURDIR)/gfx/mk_p1.py; \
+	 else echo "mk_p1.py ausente — pulando atlas P1"; fi
 	@python3 $(CURDIR)/gfx/mk_flight.py
-	@mkdir -p $(BUILD) $(GFXBUILD) $(CURDIR)/romfs/flight/ss4 $(CURDIR)/romfs/flight/dp1
+	@mkdir -p $(BUILD) $(GFXBUILD) $(CURDIR)/romfs/flight/ss4 $(CURDIR)/romfs/flight/dp1 $(CURDIR)/romfs/flight/sno $(CURDIR)/romfs/flight/test
 	@$(MAKE) --no-print-directory pack
 
 pack:
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 	@echo "---- tileset t3x ----"
-	@ls -l $(GFXBUILD)/ss4_tiles.t3x $(GFXBUILD)/dp1_tiles.t3x 2>/dev/null || echo "FALTA t3x: poe tiles.png em romfs/flight/ss4 e dp1 e volta a fazer make"
+	@ls -l $(GFXBUILD)/test_tiles.t3x $(GFXBUILD)/ss4_tiles.t3x $(GFXBUILD)/dp1_tiles.t3x $(GFXBUILD)/sno_tiles.t3x 2>/dev/null || echo "FALTA t3x: poe tiles.png+map.etm em romfs/flight/test e volta a fazer make"
 
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf 3ds.3dsx 3ds.elf 3ds.smdh \
 		$(GFXBUILD) $(CURDIR)/gfx/p1_idle0.png $(CURDIR)/gfx/p1_idle1.png \
-		$(CURDIR)/gfx/_ss4_tiles $(CURDIR)/gfx/_dp1_tiles \
-		$(CURDIR)/gfx/ss4_tiles.t3s $(CURDIR)/gfx/dp1_tiles.t3s
+		$(CURDIR)/gfx/_ss4_tiles $(CURDIR)/gfx/_dp1_tiles $(CURDIR)/gfx/_sno_tiles \
+		$(CURDIR)/gfx/_sno_tiles2 $(CURDIR)/gfx/_test_tiles \
+		$(CURDIR)/gfx/ss4_tiles.t3s $(CURDIR)/gfx/dp1_tiles.t3s \
+		$(CURDIR)/gfx/sno_tiles.t3s $(CURDIR)/gfx/sno_tiles2.t3s \
+		$(CURDIR)/gfx/test_tiles.t3s \
+		$(CURDIR)/gfx/sno_tiles_atlas.png $(CURDIR)/gfx/sno_tiles2_atlas.png \
+		$(CURDIR)/gfx/clouds.t3s
 
 #---------------------------------------------------------------------------------
 else

@@ -121,6 +121,7 @@ def find_tiles_png(folder):
         os.path.join(DIR, "..", "romfs", "flight", folder, "tiles.png"),
         os.path.join(DIR, "..", "romfs", folder, "tiles.png"),
         os.path.join(DIR, folder, "tiles.png"),
+        os.path.join(DIR, "test", "tiles.png") if folder == "test" else "",
         os.path.join(ROOT, "Ref", "flight", folder, "tiles.png"),
         os.path.join(ROOT, "Ref", folder, "tiles.png"),
         os.path.join(ROOT, "Ref", "Sprites", folder, "tiles.png"),
@@ -202,10 +203,252 @@ def slice_tileset(src_png, stem, step):
         print("mk_flight: %s ZERO tiles" % stem)
 
 
+def sno_placeholder():
+    cols, step = 5, 32
+    w, h = cols * step, step
+    p = fill(w, h, (0, 0, 0, 255))
+    pal = [
+        (8, 10, 16, 255),
+        (136, 184, 152, 255),
+        (220, 40, 180, 255),
+        (220, 190, 50, 255),
+        (40, 90, 110, 255),
+    ]
+    for i, c in enumerate(pal):
+        rect(p, w, h, i * step + 1, 1, step - 2, step - 2, c)
+    path = os.path.join(DIR, "sno_tiles_sheet.png")
+    png(path, w, h, p)
+    return path
+
+
+def pack_grid_atlas(src_png, stem, step, start, count, grid=32):
+    """Uma textura 1024x1024 com grid x grid tiles. tex3ds nao precisa resolver atlas."""
+    try:
+        from PIL import Image
+    except ImportError:
+        print("mk_flight: ERRO Pillow ausente")
+        return
+    if not src_png or not os.path.isfile(src_png):
+        return
+    im = Image.open(src_png).convert("RGBA")
+    w, h = im.size
+    atlas = Image.new("RGBA", (grid * step, grid * step), (0, 0, 0, 0))
+    i = 0
+    kept = 0
+    for y in range(0, h, step):
+        for x in range(0, w, step):
+            if i < start:
+                i += 1
+                continue
+            if kept >= count:
+                break
+            tile = im.crop((x, y, min(x + step, w), min(y + step, h)))
+            if tile.size != (step, step):
+                canvas = Image.new("RGBA", (step, step), (0, 0, 0, 0))
+                canvas.paste(tile, (0, 0))
+                tile = canvas
+            cx = kept % grid
+            cy = kept // grid
+            atlas.paste(tile, (cx * step, cy * step))
+            kept += 1
+            i += 1
+        if kept >= count:
+            break
+    if kept == 0:
+        print("mk_flight: %s ZERO tiles" % stem)
+        return
+    path = os.path.join(DIR, stem + "_atlas.png")
+    atlas.save(path)
+    t3s(stem + ".t3s", [os.path.basename(path)], "rgb565")
+    print("mk_flight: %s atlas %d tiles id %d+ -> %s" % (stem, kept, start, path))
+
+
+def write_etm(path, w, h, tile_px, count, cols, cells):
+    import struct
+    n = w * h
+    raw = bytearray(b"ETM1")
+    raw += struct.pack("<HHHHH", w, h, tile_px, count, cols)
+    for i in range(n):
+        raw += struct.pack("<H", cells[i] if i < len(cells) else 0)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "wb").write(raw)
+    print("mk_flight: etm", path, w, "x", h, "cols", cols, "count", count)
+
+
+def sno_tile_kind_src(tx, ty):
+    if ty == 0 and tx <= 20:
+        return "cloud"
+    if tx == 20 and ty == 21:
+        return "finish"
+    if (ty == 16 and tx in (17, 18)) or (tx == 8 and ty == 18) or (tx == 12 and ty == 17):
+        return "boost"
+    return "track"
+
+
+def build_sno_etm_and_atlas(src_png):
+    """tiles 8x8 + map 512x512 -> etm 128x128 (4x4) e atlas 32px."""
+    try:
+        from PIL import Image
+    except ImportError:
+        print("mk_flight: Pillow ausente")
+        pack_grid_atlas(src_png, "sno_tiles", 32, 0, 1024, 32)
+        return
+
+    im = Image.open(src_png).convert("RGBA")
+    tw, th = im.size
+    step = 8
+    if tw >= 256 and th >= 256 and tw % 32 == 0:
+        # folha antiga 32px
+        step = 32
+    cols = max(1, tw // step)
+    rows = max(1, th // step)
+    print("mk_flight: SNO tiles", tw, "x", th, "step", step, "grid", cols, "x", rows)
+
+    map_paths = (
+        os.path.join(os.path.dirname(src_png), "map.png"),
+        os.path.join(DIR, "..", "romfs", "flight", "sno", "map.png"),
+        os.path.join(os.path.expanduser("~"), "empireofLust", "platforms", "3ds",
+                     "romfs", "flight", "sno", "map.png"),
+    )
+    map_im = None
+    for p in map_paths:
+        if os.path.isfile(p):
+            map_im = Image.open(p).convert("RGBA")
+            print("mk_flight: SNO map", p, map_im.size)
+            break
+
+    cells = [0] * (128 * 128)
+    if map_im is not None:
+        mw, mh = map_im.size
+        # index RGB (r | g<<8) ou match de cor media da tile
+        avgs = []
+        for ty in range(rows):
+            for tx in range(cols):
+                tile = im.crop((tx * step, ty * step, (tx + 1) * step, (ty + 1) * step))
+                px = list(tile.getdata())
+                n = max(1, len(px))
+                r = sum(p[0] for p in px) // n
+                g = sum(p[1] for p in px) // n
+                b = sum(p[2] for p in px) // n
+                avgs.append((r, g, b))
+
+        src_w, src_h = mw, mh
+        src_ids = [0] * (src_w * src_h)
+        pix = map_im.load()
+        indexish = 0
+        for s in range(min(64, src_w)):
+            r, g, b, a = pix[s, 0]
+            if b in (0x20, 32, 0) and a > 0:
+                indexish += 1
+        use_index = indexish >= 32
+
+        for y in range(src_h):
+            for x in range(src_w):
+                r, g, b, a = pix[x, y]
+                if a < 16 or (r + g + b) < 12:
+                    src_ids[y * src_w + x] = 0
+                    continue
+                if use_index:
+                    src_ids[y * src_w + x] = (r | (g << 8)) & 0xFFFF
+                else:
+                    best, bd = 0, 1 << 30
+                    for i, (ar, ag, ab) in enumerate(avgs):
+                        d = (ar - r) * (ar - r) + (ag - g) * (ag - g) + (ab - b) * (ab - b)
+                        if d < bd:
+                            bd = d
+                            best = i
+                    src_ids[y * src_w + x] = best
+
+        # 512 -> 128 (4x4) se o mapa for o mundo 8px
+        scale = 4 if src_w >= 256 and src_h >= 256 else max(1, src_w // 128)
+        if src_w == 128 and src_h == 128:
+            scale = 1
+        for cz in range(128):
+            for cx in range(128):
+                pick = 0
+                prio = -1
+                for oy in range(scale):
+                    for ox in range(scale):
+                        sx = min(src_w - 1, cx * scale + ox)
+                        sz = min(src_h - 1, cz * scale + oy)
+                        tid = src_ids[sz * src_w + sx]
+                        tx = tid % cols
+                        ty = tid // cols
+                        kind = sno_tile_kind_src(tx, ty)
+                        pr = 3 if kind == "finish" else 2 if kind == "boost" else (
+                            0 if kind == "cloud" or tid == 0 else 1)
+                        if pr > prio:
+                            prio = pr
+                            pick = tid
+                cells[cz * 128 + cx] = pick if prio > 0 else 0
+
+    etm_dir = os.path.join(DIR, "..", "romfs", "flight", "sno")
+    if not os.path.isdir(etm_dir):
+        etm_dir = os.path.dirname(src_png)
+    write_etm(os.path.join(etm_dir, "map.etm"), 128, 128, 32, cols * rows, cols, cells)
+
+    # atlas: sobe 8px -> 32px (nearest) para o texfloor 32u
+    if step == 8:
+        big = Image.new("RGBA", (tw * 4, th * 4), (0, 0, 0, 0))
+        for ty in range(rows):
+            for tx in range(cols):
+                tile = im.crop((tx * step, ty * step, (tx + 1) * step, (ty + 1) * step))
+                tile = tile.resize((32, 32), Image.NEAREST)
+                big.paste(tile, (tx * 32, ty * 32))
+        tmp = os.path.join(DIR, "_sno_up32.png")
+        big.save(tmp)
+        ntiles = cols * rows
+        pack_grid_atlas(tmp, "sno_tiles", 32, 0, min(1024, ntiles), 32)
+        if ntiles > 1024:
+            pack_grid_atlas(tmp, "sno_tiles2", 32, 1024, ntiles - 1024, 32)
+    else:
+        pack_grid_atlas(src_png, "sno_tiles", 32, 0, 1024, 32)
+        pack_grid_atlas(src_png, "sno_tiles2", 32, 1024, 1024, 32)
+
+
+def install_test_course():
+    src = find_tiles_png("test")
+    etm_candidates = []
+    if src:
+        etm_candidates.append(os.path.join(os.path.dirname(src), "map.etm"))
+    etm_candidates.extend((
+        os.path.join(DIR, "test", "map.etm"),
+        os.path.join(DIR, "..", "romfs", "flight", "test", "map.etm"),
+        os.path.join(os.path.expanduser("~"), "empireofLust", "platforms", "3ds",
+                     "romfs", "flight", "test", "map.etm"),
+    ))
+    dest_dir = os.path.join(DIR, "..", "romfs", "flight", "test")
+    os.makedirs(dest_dir, exist_ok=True)
+    if src:
+        slice_tileset(src, "test_tiles", 32)
+        dest_png = os.path.join(dest_dir, "tiles.png")
+        if os.path.abspath(src) != os.path.abspath(dest_png):
+            shutil.copyfile(src, dest_png)
+        print("mk_flight: TEST tiles", src)
+    else:
+        print("mk_flight: TEST tiles.png AUSENTE — poe em romfs/flight/test/")
+    for e in etm_candidates:
+        if e and os.path.isfile(e):
+            dest = os.path.join(dest_dir, "map.etm")
+            if os.path.abspath(e) != os.path.abspath(dest):
+                shutil.copyfile(e, dest)
+            print("mk_flight: TEST etm", e)
+            break
+    else:
+        print("mk_flight: TEST map.etm AUSENTE")
+
+
 def install_course_tiles():
-    # provisório: SS4 32x32 (Sonic CD), DP1 8x8 (SMK). padrão vem depois.
+    install_test_course()
     slice_tileset(find_tiles_png("ss4"), "ss4_tiles", 32)
     slice_tileset(find_tiles_png("dp1"), "dp1_tiles", 8)
+    src = find_tiles_png("sno")
+    if not src:
+        src = sno_placeholder()
+        print("mk_flight: SNO placeholder 5 classes")
+        slice_tileset(src, "sno_tiles", 32)
+    else:
+        build_sno_etm_and_atlas(src)
 
 
 def main():
@@ -223,6 +466,10 @@ def main():
     t3s("bg2.t3s", ["bg2.png"])
     t3s("shirammy.t3s", ["shirammy_%s.png" % f for f in FRAMES], "rgba8888")
     t3s("rexxi.t3s", ["rexxi_%s.png" % f for f in FRAMES], "rgba8888")
+    cloud = os.path.join(DIR, "clouds.png")
+    if os.path.isfile(cloud):
+        t3s("clouds.t3s", ["clouds.png"], "rgba8888")
+        print("mk_flight: clouds.png")
 
 
 if __name__ == "__main__":

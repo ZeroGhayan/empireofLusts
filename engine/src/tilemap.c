@@ -218,7 +218,7 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 	uint32_t n, i, have;
 
 	exo_tilemap_clear(m);
-	if (!p || size < 16)
+	if (!p || size < 14)
 		return false;
 
 	magic = (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
@@ -238,18 +238,22 @@ bool exo_tilemap_load(ExoTilemap *m, const void *data, uint32_t size)
 		tile_px = EXO_TILE_PX;
 
 	n = (uint32_t)w * (uint32_t)h;
-	have = (size - 16u) / 2u;
-	if (have < n)
-		n = have;
-
-	m->w = w;
-	m->h = h;
-	m->tile_px = tile_px;
-	m->tile_count = count;
-	m->atlas_cols = flags ? flags : guess_cols(count ? count : 1);
-	for (i = 0; i < n; ++i) {
-		const uint8_t *c = p + 16 + i * 2;
-		m->cells[i] = (uint16_t)(c[0] | (c[1] << 8));
+	{
+		uint32_t hdr = 16;
+		if (size >= 14u + n * 2u && (size - 16u) / 2u < n)
+			hdr = 14;
+		have = (size - hdr) / 2u;
+		if (have < n)
+			n = have;
+		m->w = w;
+		m->h = h;
+		m->tile_px = tile_px;
+		m->tile_count = count;
+		m->atlas_cols = flags ? flags : guess_cols(count ? count : 1);
+		for (i = 0; i < n; ++i) {
+			const uint8_t *c = p + hdr + i * 2;
+			m->cells[i] = (uint16_t)(c[0] | (c[1] << 8));
+		}
 	}
 	m->loaded = true;
 	return true;

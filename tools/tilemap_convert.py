@@ -89,8 +89,8 @@ def cmd_extract(args):
         top = (src_h - need) // 2
         im = im.crop((left, top, left + need, top + need))
     gw = gh = cells_n
-    if gw > 128 or gh > 128:
-        die("grade passa de 128")
+    if gw > 512 or gh > 512:
+        die("grade passa de 512")
     unique = {}
     order = []
     cells = []
@@ -105,8 +105,8 @@ def cmd_extract(args):
                     raw[o:o + 4] = bytes((r, g, b, a))
             key = bytes(raw)
             if key not in unique:
-                if len(order) >= 1024:
-                    die("mais de 1024 tiles unicas")
+                if len(order) >= 4096:
+                    die("mais de 4096 tiles unicas")
                 unique[key] = len(order)
                 order.append(key)
             cells.append(unique[key])

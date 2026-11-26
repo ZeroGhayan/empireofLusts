@@ -7,11 +7,11 @@
 
 #define EXO_FLIGHT_CELL          32.0f
 #define EXO_FLIGHT_SLOPE_TAN     2.747f
-#define EXO_FLIGHT_RENDER        18
+#define EXO_FLIGHT_RENDER        15
 #define EXO_FLIGHT_RENDER_MIN    4
 #define EXO_FLIGHT_RENDER_MAX    20
-#define EXO_FLIGHT_HYST_ENTER    72.0f
-#define EXO_FLIGHT_HYST_LEAVE    28.0f
+#define EXO_FLIGHT_HYST_ENTER    100.0f
+#define EXO_FLIGHT_HYST_LEAVE    52.0f
 #define EXO_FLIGHT_NEAR          6.0f
 #define EXO_FLIGHT_GRAV          90.0f
 #define EXO_FLIGHT_FOCAL         210.0f
@@ -23,6 +23,9 @@
 #define EXO_FLIGHT_CHARGE_DECAY  9.00f
 #define EXO_FLIGHT_BANK_MAX      0.42f
 #define EXO_FLIGHT_PITCH_MAX     0.28f
+#define EXO_FLIGHT_PITCH_RATE    1.85f
+#define EXO_FLIGHT_CAM_ROLL      0.55f
+#define EXO_LOW_FACE_RATE        10.0f
 #define EXO_FLIGHT_SPRING_VY     110.0f
 #define EXO_FLIGHT_PIN_LOW       198.0f
 #define EXO_FLIGHT_PIN_FLY       160.0f
@@ -32,12 +35,14 @@
 #define EXO_FLIGHT_WALL_H        28.0f
 #define EXO_FLIGHT_BUMPER_H      32.0f
 #define EXO_FLIGHT_STEP_UP       10.0f
+#define EXO_FLIGHT_BODY          14.0f
 #define EXO_FLIGHT_BOOST         55.0f
 #define EXO_FLIGHT_SS4_NEED      3
-#define EXO_SNO_TRACK_H         50
-#define EXO_SNO_RAMP_LO         30
-#define EXO_SNO_RAMP_HI         124
-#define EXO_SNO_CLOUD_Y         10.0f
+#define EXO_SNO_TRACK_H         150
+#define EXO_SNO_RAMP_LO         130
+#define EXO_SNO_RAMP_HI         224
+#define EXO_SNO_CLOUD_Y         50.0f
+#define EXO_SNO_RESET_Y         20.0f
 #define EXO_SNO_FINISH_PEAK     8.0f
 #define EXO_DP1_BRIDGE_H        ((int16_t)-5)
 
@@ -66,12 +71,23 @@ typedef enum ExoCourse {
 	EXO_COURSE_DEMO = 0,
 	EXO_COURSE_SS4,
 	EXO_COURSE_DP1,
-	EXO_COURSE_SNO
+	EXO_COURSE_SNO,
+	EXO_COURSE_TEST
 } ExoCourse;
+
+#define EXO_TEST_COLS           6
+#define EXO_TEST_ROWS           5
+#define EXO_TEST_DUAL_LO        10.0f
+#define EXO_TEST_DUAL_HI        190.0f
+#define EXO_TEST_ICE_COAST      0.08f
+#define EXO_TEST_ICE_TURN       0.50f
+#define EXO_TEST_EXP_K          2.2f
+#define EXO_FLIGHT_SPRING_TEST  160.0f
 
 typedef struct ExoPilotStats {
 	float vmax;
 	float walk;
+	float run;
 	float accel;
 	float coast;
 	float turn_low;
@@ -98,6 +114,10 @@ typedef struct ExoFlight {
 	float x, y, z;
 	float yaw;
 	float pitch;
+	float body_pitch;
+	float body_roll;
+	float cam_yaw;
+	float slope_roll;
 	float speed;
 	float cruise;
 	float vy;
@@ -133,6 +153,10 @@ typedef struct ExoFlight {
 	int    fake_cz[EXO_FLIGHT_FAKE_MAX];
 	float water_t;
 	int   submerged;
+	float done_t;
+	int   input_lock;
+	float spd_prev;
+	float spd_delta;
 } ExoFlight;
 
 const ExoPilotStats *exo_pilot_stats(ExoPilot p);
@@ -149,6 +173,10 @@ float exo_flight_speed_frac(const ExoFlight *f);
 void  exo_flight_eye_offset(const ExoFlight *f, float slider, int eye_sign,
                             float *ox, float *oy);
 int   exo_flight_is_goal(const ExoFlight *f, int cx, int cz);
+float exo_flight_surf_h(const ExoFlight *f, float wx, float wz);
+void  exo_flight_cell_hy(const ExoFlight *f, int cx, int cz, float hy[4]);
+int   exo_flight_cell_exp(const ExoFlight *f, int cx, int cz);
+int   exo_flight_cell_dual(const ExoFlight *f, int cx, int cz);
 
 int   exo_flight_project(const ExoFlight *f, float wx, float wz,
                          float eye_x, float *sx, float *sy);

@@ -41,8 +41,9 @@ static void to_cam(const ExoFlight *f, float wx, float wz, float eye,
 {
 	float dx = wx - f->cam_x;
 	float dz = wz - f->cam_z;
-	*lx =  dx * cosf(f->yaw) - dz * sinf(f->yaw) + eye;
-	*lz =  dx * sinf(f->yaw) + dz * cosf(f->yaw);
+	float cy = f->cam_yaw;
+	*lx =  dx * cosf(cy) - dz * sinf(cy) + eye;
+	*lz =  dx * sinf(cy) + dz * cosf(cy);
 }
 
 static void cam_to_screen(const ExoFlight *f, float lx, float lz, float wy,
@@ -50,15 +51,13 @@ static void cam_to_screen(const ExoFlight *f, float lx, float lz, float wy,
 {
 	float ly = f->cam_h - wy;
 	float k;
+	float cp = cosf(-f->pitch);
+	float sp = sinf(-f->pitch);
+	float ly2 = ly * cp - lz * sp;
+	float lz2 = ly * sp + lz * cp;
 
-	if (f->cam_ref == EXO_CAM_PILOT) {
-		float cp = cosf(-f->pitch);
-		float sp = sinf(-f->pitch);
-		float ly2 = ly * cp - lz * sp;
-		float lz2 = ly * sp + lz * cp;
-		ly = ly2;
-		lz = lz2;
-	}
+	ly = ly2;
+	lz = lz2;
 	if (lz < EXO_FLIGHT_NEAR)
 		lz = EXO_FLIGHT_NEAR;
 	k = EXO_FLIGHT_FOCAL / lz;
@@ -72,11 +71,9 @@ void exo_flight_apply_ref(const ExoFlight *f, float *sx, float *sy)
 	float cy = f->horizon;
 	float b, c, s, dx, dy;
 
-	if (f->cam_ref != EXO_CAM_PILOT)
+	if (fabsf(f->bank) < 0.002f && fabsf(f->slope_roll) < 0.002f)
 		return;
-	if (fabsf(f->bank) < 0.002f)
-		return;
-	b = f->bank;
+	b = f->bank * 0.35f + f->slope_roll * EXO_FLIGHT_CAM_ROLL;
 	c = cosf(b);
 	s = sinf(b);
 	dx = *sx - cx;
