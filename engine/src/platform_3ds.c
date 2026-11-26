@@ -77,7 +77,6 @@ bool exo_init(void)
 	g_t0 = osGetTime();
 	g_t1 = g_t0;
 	g_dt = 1.0f / 60.0f;
-	g_botfb = NULL;
 	memset(&g_in, 0, sizeof(g_in));
 	g_in.new_3ds = g_new3ds;
 	return true;
@@ -301,6 +300,6 @@ void exo_minimap_draw(float x, float y, float s)
 	par.pos.y = y;
 	par.pos.w = s;
 	par.pos.h = s;
-	par.pos.depth = 0.42f;
+	par.depth = 0.42f;
 	C2D_DrawImage(g_mini_img, &par, NULL);
 }
