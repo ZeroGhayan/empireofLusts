@@ -56,6 +56,9 @@ static u32 map_keys(u32 hid)
 
 bool exo_init(void)
 {
+	/* New 3DS: 804 MHz + cache L2. Sem isto um .3dsx roda a 268 MHz
+	   mesmo no New 3DS (no 3DS antigo a chamada nao faz nada). */
+	osSetSpeedupEnable(true);
 	gfxInitDefault();
 	gfxSet3D(true);
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
@@ -272,6 +275,15 @@ void exo_minimap_begin(int w, int h)
 	}
 	g_mini_w = w;
 	g_mini_h = h;
+	/* so a area w x h do mapa aparece (mapas menores que 128 nao esticam
+	   borda preta). Texturas do PICA guardam a linha de baixo primeiro:
+	   topo da imagem = v 1.0 (mesma convencao do tex3ds). */
+	g_mini_sub.width = (u16)w;
+	g_mini_sub.height = (u16)h;
+	g_mini_sub.left = 0.0f;
+	g_mini_sub.top = 1.0f;
+	g_mini_sub.right = (float)w / 128.0f;
+	g_mini_sub.bottom = 1.0f - (float)h / 128.0f;
 	memset(g_mini_tex.data, 0, 128 * 128 * 2);
 }
 
@@ -281,7 +293,8 @@ void exo_minimap_put(int x, int y, uint32_t rgba)
 	if (!g_mini_ready || x < 0 || y < 0 || x >= 128 || y >= 128)
 		return;
 	px = (u16 *)g_mini_tex.data;
-	px[mini_tile_off((u32)x, (u32)y, 128)] = rgba_to_565(rgba);
+	/* y da imagem (0 = topo) -> linha da textura (0 = base) */
+	px[mini_tile_off((u32)x, (u32)(127 - y), 128)] = rgba_to_565(rgba);
 }
 
 void exo_minimap_end(void)
@@ -300,6 +313,8 @@ void exo_minimap_draw(float x, float y, float s)
 	par.pos.y = y;
 	par.pos.w = s;
 	par.pos.h = s;
-	par.depth = 0.42f;
+	/* acima do fundo (exo_bot_rect 0.44) e abaixo dos marcadores (linhas
+	   0.46): o C2D testa profundidade com GREATER */
+	par.depth = 0.445f;
 	C2D_DrawImage(g_mini_img, &par, NULL);
 }

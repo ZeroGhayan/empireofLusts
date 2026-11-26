@@ -1,3 +1,6 @@
+; Piso texturizado do voo: posicao ja projetada na CPU (tela 400x240),
+; UV do tile e fator de neblina por vertice (0 = perto, 1 = cor da neblina).
+
 .fvec projection[4]
 
 .constf myconst(0.0, 1.0, -1.0, 0.1)
@@ -5,9 +8,11 @@
 
 .out outpos position
 .out outtc0 texcoord0
+.out outclr color
 
 .alias inpos v0
 .alias intex v1
+.alias infog v2
 
 .proc main
 	mov r0.xyz, inpos
@@ -17,5 +22,6 @@
 	dp4 outpos.z, projection[2], r0
 	dp4 outpos.w, projection[3], r0
 	mov outtc0, intex
+	mov outclr, infog.xxxx
 	end
 .end
