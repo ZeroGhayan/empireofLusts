@@ -2,6 +2,7 @@
 
 #include <3ds.h>
 #include <citro2d.h>
+#include <citro3d.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -10,6 +11,7 @@
 
 static C3D_RenderTarget *g_left;
 static C3D_RenderTarget *g_right;
+static C3D_RenderTarget *g_bot;
 static C2D_TextBuf g_tbuf;
 static bool  g_new3ds;
 static bool  g_romfs;
@@ -19,7 +21,11 @@ static float g_slider;
 static circlePosition g_stick, g_cstick;
 static touchPosition  g_touch;
 static ExoInput g_in;
-static u8 *g_botfb;
+static C3D_Tex g_mini_tex;
+static Tex3DS_SubTexture g_mini_sub;
+static C2D_Image g_mini_img;
+static int g_mini_ready;
+static int g_mini_w, g_mini_h;
 
 static float axis_from(s16 v)
 {
@@ -50,25 +56,32 @@ static u32 map_keys(u32 hid)
 
 bool exo_init(void)
 {
+	/* New 3DS: 804 MHz + cache L2. Sem isto um .3dsx roda a 268 MHz
+	   mesmo no New 3DS (no 3DS antigo a chamada nao faz nada). */
+	osSetSpeedupEnable(true);
 	gfxInitDefault();
-    gfxSetDoubleBuffering(GFX_BOTTOM, false);
-	gfxSet3D(true);
+	APT_CheckNew3DS(&g_new3ds);
+	/* 3D estereo no voo so no New 3DS (decisao 26/11). No Old o hardware
+	   nem liga o modo 3D e o slider e tratado como 0. */
+	gfxSet3D(g_new3ds);
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
-	C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
+	/* dois olhos + HUD; o default 4096 rebenta com minimapa a pontos */
+	C2D_Init(8192);
 	C2D_Prepare();
 
 	g_left  = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 	g_right = C2D_CreateScreenTarget(GFX_TOP, GFX_RIGHT);
-	if (!g_left || !g_right)
+	g_bot   = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
+	if (!g_left || !g_right || !g_bot)
 		return false;
+	g_mini_ready = 0;
+	g_mini_w = g_mini_h = 0;
 
 	g_tbuf = C2D_TextBufNew(512);
 	g_romfs = (romfsInit() == 0);
-	APT_CheckNew3DS(&g_new3ds);
 	g_t0 = osGetTime();
 	g_t1 = g_t0;
 	g_dt = 1.0f / 60.0f;
-	g_botfb = NULL;
 	memset(&g_in, 0, sizeof(g_in));
 	g_in.new_3ds = g_new3ds;
 	return true;
@@ -79,6 +92,10 @@ void exo_shutdown(void)
 	if (g_tbuf) {
 		C2D_TextBufDelete(g_tbuf);
 		g_tbuf = NULL;
+	}
+	if (g_mini_ready) {
+		C3D_TexDelete(&g_mini_tex);
+		g_mini_ready = 0;
 	}
 	C2D_Fini();
 	C3D_Fini();
@@ -122,7 +139,7 @@ bool exo_frame_begin(void)
 	g_in.stick_y  = axis_from(g_stick.dy);
 	g_in.cstick_x = axis_from(g_cstick.dx);
 	g_in.cstick_y = axis_from(g_cstick.dy);
-	g_in.slider_3d = g_slider;
+	g_in.slider_3d = g_new3ds ? g_slider : 0.0f;
 	g_in.new_3ds  = g_new3ds;
 	return true;
 }
@@ -136,7 +153,7 @@ bool  exo_down(u32 m) { return (g_in.down & m) != 0; }
 bool  exo_held(u32 m) { return (g_in.held & m) != 0; }
 bool  exo_up(u32 m)   { return (g_in.up & m) != 0; }
 float exo_dt(void)    { return g_dt; }
-float exo_slider_3d(void) { return g_slider; }
+float exo_slider_3d(void) { return g_new3ds ? g_slider : 0.0f; }
 
 void exo_render_begin(void)
 {
@@ -153,8 +170,6 @@ void exo_render_eye(ExoEye eye, u32 clear_rgba)
 
 void exo_render_end(void)
 {
-	if (g_botfb)
-		GSPGPU_FlushDataCache(g_botfb, 320 * 240 * 3);
 	C3D_FrameEnd(0);
 }
 
@@ -177,100 +192,30 @@ void exo_top_text(float x, float y, float scale, uint32_t rgba, const char *s)
 	             scale, scale, rgba);
 }
 
-static void bot_px(int x, int y, u8 r, u8 g, u8 b)
-{
-	u32 off;
-	if (!g_botfb || x < 0 || y < 0 || x >= 320 || y >= 240)
-		return;
-	off = ((u32)x * 240u + (u32)(239 - y)) * 3u;
-	g_botfb[off + 0] = b;
-	g_botfb[off + 1] = g;
-	g_botfb[off + 2] = r;
-}
-
-static void unpack(u32 rgba, u8 *r, u8 *g, u8 *b)
-{
-	*r = (u8)(rgba & 0xFFu);
-	*g = (u8)((rgba >> 8) & 0xFFu);
-	*b = (u8)((rgba >> 16) & 0xFFu);
-}
-
 void exo_render_bottom(uint32_t clear_rgba)
 {
-	u8 r, g, b;
-	int i, n;
-
-	g_botfb = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
-	if (!g_botfb)
+	if (!g_bot)
 		return;
-	unpack(clear_rgba, &r, &g, &b);
-	n = 320 * 240;
-	for (i = 0; i < n; ++i) {
-		g_botfb[i * 3 + 0] = b;
-		g_botfb[i * 3 + 1] = g;
-		g_botfb[i * 3 + 2] = r;
-	}
+	C2D_TargetClear(g_bot, clear_rgba);
+	C2D_SceneBegin(g_bot);
+}
+
+void exo_bot_dot(int x, int y, uint32_t rgba)
+{
+	C2D_DrawRectSolid((float)x, (float)y, 0.45f, 1.0f, 1.0f, rgba);
 }
 
 void exo_bot_rect(float x, float y, float w, float h, uint32_t rgba)
 {
-	int x0 = (int)x, y0 = (int)y;
-	int x1 = (int)(x + w), y1 = (int)(y + h);
-	int ix, iy;
-	u8 r, g, b;
-
-	unpack(rgba, &r, &g, &b);
-	if (x0 < 0) x0 = 0;
-	if (y0 < 0) y0 = 0;
-	if (x1 > 320) x1 = 320;
-	if (y1 > 240) y1 = 240;
-	for (iy = y0; iy < y1; ++iy)
-		for (ix = x0; ix < x1; ++ix)
-			bot_px(ix, iy, r, g, b);
+	if (w < 1.0f) w = 1.0f;
+	if (h < 1.0f) h = 1.0f;
+	C2D_DrawRectSolid(x, y, 0.44f, w, h, rgba);
 }
 
 void exo_bot_line(float x0, float y0, float x1, float y1, uint32_t rgba)
 {
-	int ix0 = (int)x0, iy0 = (int)y0;
-	int ix1 = (int)x1, iy1 = (int)y1;
-	int dx = abs(ix1 - ix0), sx = ix0 < ix1 ? 1 : -1;
-	int dy = -abs(iy1 - iy0), sy = iy0 < iy1 ? 1 : -1;
-	int err = dx + dy;
-	u8 r, g, b;
-
-	unpack(rgba, &r, &g, &b);
-	for (;;) {
-		int e2;
-		bot_px(ix0, iy0, r, g, b);
-		bot_px(ix0 + 1, iy0, r, g, b);
-		bot_px(ix0, iy0 + 1, r, g, b);
-		if (ix0 == ix1 && iy0 == iy1)
-			break;
-		e2 = 2 * err;
-		if (e2 >= dy) { err += dy; ix0 += sx; }
-		if (e2 <= dx) { err += dx; iy0 += sy; }
-	}
+	C2D_DrawLine(x0, y0, rgba, x1, y1, rgba, 1.5f, 0.46f);
 }
-
-static const uint8_t FONT[59][7] = {
-	{0,0,0,0,0,0,0},{4,4,4,4,0,4,0},{10,10,0,0,0,0,0},{10,31,10,31,10,0,0},
-	{4,15,20,14,5,30,4},{18,18,4,8,18,18,0},{8,20,8,21,18,13,0},{4,4,0,0,0,0,0},
-	{2,4,4,4,4,2,0},{8,4,4,4,4,8,0},{0,10,4,31,4,10,0},{0,4,4,31,4,4,0},
-	{0,0,0,0,4,4,8},{0,0,0,31,0,0,0},{0,0,0,0,0,4,0},{1,2,4,8,16,0,0},
-	{14,17,19,21,25,14,0},{4,12,4,4,4,14,0},{14,17,2,4,8,31,0},{14,17,6,1,17,14,0},
-	{2,6,10,31,2,2,0},{31,16,30,1,17,14,0},{14,16,30,17,17,14,0},{31,1,2,4,8,8,0},
-	{14,17,14,17,17,14,0},{14,17,17,15,1,14,0},{0,4,0,0,4,0,0},{0,4,0,0,4,4,8},
-	{2,4,8,4,2,0,0},{0,0,31,0,31,0,0},{8,4,2,4,8,0,0},{14,17,2,4,0,4,0},
-	{14,17,23,21,16,14,0},{14,17,17,31,17,17,0},{30,17,30,17,17,30,0},
-	{14,17,16,16,17,14,0},{30,17,17,17,17,30,0},{31,16,30,16,16,31,0},
-	{31,16,30,16,16,16,0},{14,17,16,23,17,14,0},{17,17,31,17,17,17,0},
-	{14,4,4,4,4,14,0},{1,1,1,1,17,14,0},{17,18,28,18,17,17,0},
-	{16,16,16,16,16,31,0},{17,27,21,17,17,17,0},{17,25,21,19,17,17,0},
-	{14,17,17,17,17,14,0},{30,17,17,30,16,16,0},{14,17,17,21,18,13,0},
-	{30,17,17,30,18,17,0},{14,17,8,4,17,14,0},{31,4,4,4,4,4,0},
-	{17,17,17,17,17,14,0},{17,17,17,17,10,4,0},{17,17,17,21,27,17,0},
-	{17,17,14,17,17,17,0},{17,17,10,4,4,4,0},{31,1,2,4,8,31,0},
-};
 
 void exo_text_begin(void)
 {
@@ -278,34 +223,100 @@ void exo_text_begin(void)
 
 void exo_text(float x, float y, float scale, uint32_t rgba, const char *s)
 {
-	int px = (scale < 0.34f) ? 1 : ((scale < 0.6f) ? 2 : 3);
-	int cx = (int)x, i, row, col;
-	u8 r, g, b;
+	C2D_Text t;
 
-	unpack(rgba, &r, &g, &b);
-	if (!s)
+	if (!g_tbuf || !s || !s[0])
 		return;
-	for (i = 0; s[i]; ++i) {
-		int ch = s[i];
-		if (ch >= 'a' && ch <= 'z')
-			ch -= 32;
-		if (ch == '_')
-			ch = '-';
-		if (ch < 32 || ch > 90) {
-			cx += 6 * px;
-			continue;
-		}
-		for (row = 0; row < 7; ++row) {
-			u8 bits = FONT[ch - 32][row];
-			for (col = 0; col < 5; ++col)
-				if (bits & (1 << (4 - col))) {
-					int p, q;
-					for (q = 0; q < px; ++q)
-						for (p = 0; p < px; ++p)
-							bot_px(cx + col * px + p,
-							       (int)y + row * px + q, r, g, b);
-				}
-		}
-		cx += 6 * px;
+	C2D_TextBufClear(g_tbuf);
+	C2D_TextParse(&t, g_tbuf, s);
+	C2D_TextOptimize(&t);
+	C2D_DrawText(&t, C2D_WithColor, x, y, 0.55f, scale, scale, rgba);
+}
+
+static u32 mini_tile_off(u32 x, u32 y, u32 w)
+{
+	u32 cx = x >> 3, cy = y >> 3;
+	u32 px = x & 7, py = y & 7;
+	u32 tile = (cy * (w >> 3) + cx) * 64u;
+	u32 local = (px & 1u)
+	          | ((py & 1u) << 1)
+	          | ((px & 2u) << 1)
+	          | ((py & 2u) << 2)
+	          | ((px & 4u) << 2)
+	          | ((py & 4u) << 3);
+	return tile + local;
+}
+
+static u16 rgba_to_565(uint32_t rgba)
+{
+	u32 r = rgba & 0xFFu;
+	u32 g = (rgba >> 8) & 0xFFu;
+	u32 b = (rgba >> 16) & 0xFFu;
+	return (u16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+void exo_minimap_begin(int w, int h)
+{
+	if (w < 8) w = 8;
+	if (h < 8) h = 8;
+	if (w > 128) w = 128;
+	if (h > 128) h = 128;
+	if (!g_mini_ready) {
+		if (!C3D_TexInit(&g_mini_tex, 128, 128, GPU_RGB565))
+			return;
+		C3D_TexSetFilter(&g_mini_tex, GPU_NEAREST, GPU_NEAREST);
+		g_mini_sub.width = 128;
+		g_mini_sub.height = 128;
+		g_mini_sub.left = 0.0f;
+		g_mini_sub.top = 1.0f;
+		g_mini_sub.right = 1.0f;
+		g_mini_sub.bottom = 0.0f;
+		g_mini_img.tex = &g_mini_tex;
+		g_mini_img.subtex = &g_mini_sub;
+		g_mini_ready = 1;
 	}
+	g_mini_w = w;
+	g_mini_h = h;
+	/* so a area w x h do mapa aparece (mapas menores que 128 nao esticam
+	   borda preta). Texturas do PICA guardam a linha de baixo primeiro:
+	   topo da imagem = v 1.0 (mesma convencao do tex3ds). */
+	g_mini_sub.width = (u16)w;
+	g_mini_sub.height = (u16)h;
+	g_mini_sub.left = 0.0f;
+	g_mini_sub.top = 1.0f;
+	g_mini_sub.right = (float)w / 128.0f;
+	g_mini_sub.bottom = 1.0f - (float)h / 128.0f;
+	memset(g_mini_tex.data, 0, 128 * 128 * 2);
+}
+
+void exo_minimap_put(int x, int y, uint32_t rgba)
+{
+	u16 *px;
+	if (!g_mini_ready || x < 0 || y < 0 || x >= 128 || y >= 128)
+		return;
+	px = (u16 *)g_mini_tex.data;
+	/* y da imagem (0 = topo) -> linha da textura (0 = base) */
+	px[mini_tile_off((u32)x, (u32)(127 - y), 128)] = rgba_to_565(rgba);
+}
+
+void exo_minimap_end(void)
+{
+	if (g_mini_ready)
+		C3D_TexFlush(&g_mini_tex);
+}
+
+void exo_minimap_draw(float x, float y, float s)
+{
+	C2D_DrawParams par;
+	if (!g_mini_ready)
+		return;
+	memset(&par, 0, sizeof(par));
+	par.pos.x = x;
+	par.pos.y = y;
+	par.pos.w = s;
+	par.pos.h = s;
+	/* acima do fundo (exo_bot_rect 0.44) e abaixo dos marcadores (linhas
+	   0.46): o C2D testa profundidade com GREATER */
+	par.depth = 0.445f;
+	C2D_DrawImage(g_mini_img, &par, NULL);
 }

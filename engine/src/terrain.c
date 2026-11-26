@@ -13,6 +13,10 @@ int exo_terrain_cols(ExoCourse course, const ExoTilemap *m)
 		c = EXO_SS4_COLS;
 	else if (course == EXO_COURSE_DP1)
 		c = EXO_DP1_COLS;
+	else if (course == EXO_COURSE_SNO)
+		c = EXO_SNO_COLS;
+	else if (course == EXO_COURSE_TEST)
+		c = EXO_TEST_ATLAS_COLS;
 	else
 		c = 8;
 	if (c < 1)
@@ -107,14 +111,52 @@ static ExoTerrain kind_ss4(int c, uint16_t id)
 	return EXO_TER_NONE;
 }
 
+static ExoTerrain kind_test(int c, uint16_t id)
+{
+	int tx, ty;
+
+	if (c < 1)
+		c = EXO_TEST_ATLAS_COLS;
+	tx = (int)id % c;
+	ty = (int)id / c;
+	if (tx == 1 && ty == 0)
+		return EXO_TER_WATER;
+	if (tx == 0 && ty == 2)
+		return EXO_TER_ICE;
+	if (tx == 0 && ty == 1)
+		return EXO_TER_DUAL;
+	if (tx == 5 && ty == 4)
+		return EXO_TER_SPRING;
+	return EXO_TER_NONE;
+}
+
 ExoTerrain exo_terrain_kind(ExoCourse course, const ExoTilemap *m, uint16_t id)
 {
 	int c = exo_terrain_cols(course, m);
 
+	if (course == EXO_COURSE_TEST)
+		return kind_test(c, id);
 	if (course == EXO_COURSE_DP1)
 		return kind_dp1(c, id);
 	if (course == EXO_COURSE_SS4)
 		return kind_ss4(c, id);
+	if (course == EXO_COURSE_SNO) {
+		int tx, ty;
+		tx = (int)id % c;
+		ty = (int)id / c;
+		/* nuvem [0,0]..[20,0]: so camada de baixo, nao e pista */
+		if (ty == 0 && tx <= 20)
+			return EXO_TER_NONE;
+		if (id == 0)
+			return EXO_TER_NONE;
+		if (tx == 20 && ty == 21)
+			return EXO_TER_FINISH;
+		if ((ty == 16 && (tx == 17 || tx == 18)) ||
+		    (tx == 8 && ty == 18) ||
+		    (tx == 12 && ty == 17))
+			return EXO_TER_BOOST;
+		return EXO_TER_NONE;
+	}
 	if (id == EXO_TILE_WALL)
 		return EXO_TER_WALL;
 	if (id == EXO_TILE_SPRING)

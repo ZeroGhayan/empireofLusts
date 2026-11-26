@@ -36,49 +36,65 @@ void exo_flight_eye_offset(const ExoFlight *f, float slider, int eye_sign,
 	*oy = 0.0f;
 }
 
+void exo_flight_cam_update(ExoFlight *f)
+{
+	float b;
+	f->cam_cy = cosf(f->cam_yaw);
+	f->cam_sy = sinf(f->cam_yaw);
+	f->cam_cp = cosf(-f->pitch);
+	f->cam_sp = sinf(-f->pitch);
+	f->ref_on = !(fabsf(f->bank) < 0.002f && fabsf(f->slope_roll) < 0.002f);
+	b = f->bank * 0.35f + f->slope_roll * EXO_FLIGHT_CAM_ROLL;
+	f->ref_c = cosf(b);
+	f->ref_s = sinf(b);
+}
+
+/* antes: 2 cosf + 2 sinf por chamada (4 por canto de tile, 2 olhos);
+   agora le o cache montado por exo_flight_cam_update(). */
 static void to_cam(const ExoFlight *f, float wx, float wz, float eye,
                    float *lx, float *lz)
 {
 	float dx = wx - f->cam_x;
 	float dz = wz - f->cam_z;
-	*lx =  dx * cosf(f->yaw) - dz * sinf(f->yaw) + eye;
-	*lz =  dx * sinf(f->yaw) + dz * cosf(f->yaw);
+	*lx =  dx * f->cam_cy - dz * f->cam_sy + eye;
+	*lz =  dx * f->cam_sy + dz * f->cam_cy;
 }
 
-static void cam_to_screen(const ExoFlight *f, float lx, float lz, float wy,
-                          float *sx, float *sy)
+/* retorna 0 se, depois de aplicar o pitch, o ponto ficou atras do plano
+   proximo: antes ele era so "grudado" em NEAR e virava uma ponta esticada
+   na tela (um dos glitches de tile gigante ao inclinar a camera). */
+static int cam_to_screen(const ExoFlight *f, float lx, float lz, float wy,
+                         float *sx, float *sy)
 {
+	int ok;
 	float ly = f->cam_h - wy;
 	float k;
+	float cp = f->cam_cp;
+	float sp = f->cam_sp;
+	float ly2 = ly * cp - lz * sp;
+	float lz2 = ly * sp + lz * cp;
 
-	if (f->cam_ref == EXO_CAM_PILOT) {
-		float cp = cosf(-f->pitch);
-		float sp = sinf(-f->pitch);
-		float ly2 = ly * cp - lz * sp;
-		float lz2 = ly * sp + lz * cp;
-		ly = ly2;
-		lz = lz2;
-	}
+	ly = ly2;
+	lz = lz2;
+	ok = lz >= EXO_FLIGHT_NEAR * 0.5f;
 	if (lz < EXO_FLIGHT_NEAR)
 		lz = EXO_FLIGHT_NEAR;
 	k = EXO_FLIGHT_FOCAL / lz;
 	*sx = 200.0f + lx * k;
 	*sy = f->horizon + ly * k;
+	return ok;
 }
 
 void exo_flight_apply_ref(const ExoFlight *f, float *sx, float *sy)
 {
 	float cx = 200.0f;
 	float cy = f->horizon;
-	float b, c, s, dx, dy;
+	float c, s, dx, dy;
 
-	if (f->cam_ref != EXO_CAM_PILOT)
+	if (!f->ref_on)
 		return;
-	if (fabsf(f->bank) < 0.002f)
-		return;
-	b = f->bank;
-	c = cosf(b);
-	s = sinf(b);
+	c = f->ref_c;
+	s = f->ref_s;
 	dx = *sx - cx;
 	dy = *sy - cy;
 	*sx = cx + dx * c - dy * s;
@@ -92,7 +108,8 @@ int exo_flight_project3(const ExoFlight *f, float wx, float wy, float wz,
 	to_cam(f, wx, wz, eye_x, &lx, &lz);
 	if (lz < EXO_FLIGHT_NEAR * 0.5f)
 		return 0;
-	cam_to_screen(f, lx, lz, wy, sx, sy);
+	if (!cam_to_screen(f, lx, lz, wy, sx, sy))
+		return 0;
 	exo_flight_apply_ref(f, sx, sy);
 	return 1;
 }
@@ -180,7 +197,7 @@ int exo_flight_clip_quad(const ExoFlight *f, float wx, float wz, float cell,
 	}
 	if (n > 6) n = 6;
 	for (i = 0; i < n; ++i) {
-		cam_to_screen(f, olx[i], olz[i], 0.0f, &sx[i], &sy[i]);
+		(void)cam_to_screen(f, olx[i], olz[i], 0.0f, &sx[i], &sy[i]);
 		exo_flight_apply_ref(f, &sx[i], &sy[i]);
 	}
 	*nv = n;

@@ -5,6 +5,8 @@
 
 #define EXO_SS4_COLS 19
 #define EXO_DP1_COLS 16
+#define EXO_SNO_COLS 24
+#define EXO_TEST_ATLAS_COLS 6
 
 typedef enum ExoTerrain {
 	EXO_TER_NONE = 0,
@@ -19,7 +21,9 @@ typedef enum ExoTerrain {
 	EXO_TER_BOOST_S,
 	EXO_TER_BOOST_E,
 	EXO_TER_BOOST_W,
-	EXO_TER_BOOST
+	EXO_TER_BOOST,
+	EXO_TER_ICE,
+	EXO_TER_DUAL
 } ExoTerrain;
 
 int        exo_terrain_cols(ExoCourse course, const ExoTilemap *m);
